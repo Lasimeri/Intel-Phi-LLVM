@@ -11,7 +11,7 @@ Contents of the tarball:
 | Path | Holds |
 | --- | --- |
 | `bin/` | `clang-<ver>` and its links (`clang clang++ cc c++`), `lld` (`ld.lld`, `ld`), seven binutils-style llvm tools |
-| `bin/<name>.cfg` | The stack's `clang.cfg` (the knc64-x87 flag set, `-static`, compiler-rt, libc++) with `--sysroot` set to the prefix |
+| `bin/<name>.cfg` | `config/knc.cfg` (`-march=knc` and the verified hardening defaults) plus `--sysroot` set to the prefix |
 | `usr/include`, `usr/lib` | The sysroot from `scripts/runtimes.sh` (musl, libunwind, libc++ of this LLVM) |
 | `lib/clang/<ver>/` | The compiler's own headers, the compiler-rt builtins and crt objects |
 

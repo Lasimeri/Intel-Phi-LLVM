@@ -20,3 +20,13 @@ more than two x87 registers through memory (knc64-x87 ABI).
 Applying them by hand is not part of any workflow: `build.sh` does it and
 leaves the tree at the patched state, so a rerun after a clone is
 idempotent.
+
+## Knights Corner as a CPU (S1, 2026-10-15)
+
+| Patch | Files | Change |
+| --- | --- | --- |
+| 0011 | `X86.td`, `X86Subtarget.cpp`, `MCTargetDesc/X86MCTargetDesc.{h,cpp}`, `TargetParser/X86TargetParser.{h,cpp}` | `FeatureKNC` ("knc"), outside the `X86SSELevel` ladder. CPU `knc`: x87, cx8, fxsr, 64bit, knc, with x86-64's scheduling model and the tuning that `-march=x86-64` gets (`generic`). `dropTripleSSE2` removes the `+sse2` that `ParseX86Triple` adds for x86_64; otherwise it would override the CPU's list (backend and MC). The target parser gets `CK_KNC`. |
+| 0012 | `clang/lib/Basic/Targets/X86.cpp` | `initFeatureMap` does not force SSE2 for `knc`. `-march=knc` predefines `__MIC__` and `__KNC__` as 1, as Intel's compiler did for `-mmic`, plus `__knc`, `__knc__` and `__tune_knc__`. Cache line 64 bytes (SSDG 328207). |
+
+Checked by `scripts/march-check.sh` (byte-identical to `knc-cc`'s flags
+on 1,359 sources) and `scripts/hardening-check.sh`.

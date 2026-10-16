@@ -1,0 +1,147 @@
+diff --git a/llvm/include/llvm/TargetParser/X86TargetParser.h b/llvm/include/llvm/TargetParser/X86TargetParser.h
+index 455228750..dae95e35a 100644
+--- a/llvm/include/llvm/TargetParser/X86TargetParser.h
++++ b/llvm/include/llvm/TargetParser/X86TargetParser.h
+@@ -112,6 +112,7 @@ enum CPUKind {
+   CK_Diamondrapids,
+   CK_KNL,
+   CK_KNM,
++  CK_KNC,
+   CK_Lakemont,
+   CK_K6,
+   CK_K6_2,
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86MCTargetDesc.cpp b/llvm/lib/Target/X86/MCTargetDesc/X86MCTargetDesc.cpp
+index 5f50e197e..f22264341 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86MCTargetDesc.cpp
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86MCTargetDesc.cpp
+@@ -62,6 +62,14 @@ std::string X86_MC::ParseX86Triple(const Triple &TT) {
+   return FS;
+ }
+ 
++std::string X86_MC::dropTripleSSE2(StringRef FS) {
++  std::string S = FS.str();
++  size_t P = S.find(",+sse2");
++  if (P != std::string::npos)
++    S.erase(P, 6);
++  return S;
++}
++
+ unsigned X86_MC::getDwarfRegFlavour(const Triple &TT, bool isEH) {
+   if (TT.isX86_64())
+     return DWARFFlavour::X86_64;
+@@ -459,6 +467,9 @@ MCSubtargetInfo *X86_MC::createX86MCSubtargetInfo(const Triple &TT,
+                                                   StringRef CPU, StringRef FS) {
+   std::string ArchFS = X86_MC::ParseX86Triple(TT);
+   assert(!ArchFS.empty() && "Failed to parse X86 triple");
++  // Intel Phi 3120A project: no implicit SSE2 for "knc" (see X86Subtarget).
++  if (CPU == "knc")
++    ArchFS = dropTripleSSE2(ArchFS);
+   if (!FS.empty())
+     ArchFS = (Twine(ArchFS) + "," + FS).str();
+ 
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86MCTargetDesc.h b/llvm/lib/Target/X86/MCTargetDesc/X86MCTargetDesc.h
+index 0e0e13e89..b86ac02e6 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86MCTargetDesc.h
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86MCTargetDesc.h
+@@ -58,6 +58,10 @@ namespace N86 {
+ namespace X86_MC {
+ std::string ParseX86Triple(const Triple &TT);
+ 
++/// Remove the "+sse2" ParseX86Triple adds for x86_64 (Intel Phi 3120A
++/// project: the "knc" CPU has no SSE, ISA 327364 appendix B).
++std::string dropTripleSSE2(StringRef FS);
++
+ unsigned getDwarfRegFlavour(const Triple &TT, bool isEH);
+ 
+ void initLLVMToSEHAndCVRegMapping(MCRegisterInfo *MRI);
+diff --git a/llvm/lib/Target/X86/X86.td b/llvm/lib/Target/X86/X86.td
+index b724a12d2..9fc33a425 100644
+--- a/llvm/lib/Target/X86/X86.td
++++ b/llvm/lib/Target/X86/X86.td
+@@ -133,6 +133,13 @@ def FeatureEVEX512  : SubtargetFeature<"evex512", "HasEVEX512", "true",
+ def FeatureAVX512   : SubtargetFeature<"avx512f", "X86SSELevel", "AVX512",
+                                       "Enable AVX-512 instructions",
+                                       [FeatureAVX2, FeatureFMA, FeatureF16C]>;
++// Intel Phi 3120A project: the Knights Corner vector unit (512-bit MVEX
++// encoding, Intel Xeon Phi Coprocessor ISA reference 327364). Outside the
++// X86SSELevel ladder on purpose: "avx512f" implies AVX2 and SSE, which
++// Knights Corner does not execute (ISA 327364, appendix B). No instruction
++// uses it yet; the MVEX definitions are a later patch.
++def FeatureKNC     : SubtargetFeature<"knc", "HasKNC", "true",
++                                      "Enable the Knights Corner vector unit (MVEX)">;
+ def FeatureCDI      : SubtargetFeature<"avx512cd", "HasCDI", "true",
+                       "Enable AVX-512 Conflict Detection Instructions",
+                                       [FeatureAVX512]>;
+@@ -1530,6 +1537,12 @@ def ProcessorFeatures {
+   list<SubtargetFeature> KNMFeatures =
+     !listconcat(KNLFeatures, [FeatureVPOPCNTDQ]);
+ 
++  // Knights Corner (Xeon Phi x100; Intel Phi 3120A project): the x86-64
++  // baseline without CMOV, MMX, SSE/SSE2 and the 0F 1F NOPs, which the core
++  // does not execute (ISA 327364, appendix B), plus the vector unit.
++  list<SubtargetFeature> KNCFeatures = [FeatureX87, FeatureCX8, FeatureFXSR,
++                                        FeatureX86_64, FeatureKNC];
++
+   // Barcelona
+   list<SubtargetFeature> BarcelonaFeatures = [FeatureX87,
+                                               FeatureCX8,
+@@ -2081,6 +2094,17 @@ foreach P = ["knl", "mic_avx512"] in {
+   def : ProcModel<P, HaswellModel, ProcessorFeatures.KNLFeatures,
+                   ProcessorFeatures.KNLTuning>;
+ }
++// Knights Corner keeps the scheduling model and tuning that -march=x86-64
++// gets (X86TargetMachine::getSubtargetImpl tunes "x86-64" as "generic"),
++// so its scalar code is what -march=x86-64 minus the deleted instructions
++// gives. A model of the in-order KNC core would be separate, measured work.
++def : ProcModel<"knc", SandyBridgeModel, ProcessorFeatures.KNCFeatures,
++                [TuningSlow3OpsLEA,
++                 TuningSlowDivide64,
++                 TuningMacroFusion,
++                 TuningFastScalarFSQRT,
++                 TuningFast15ByteNOP,
++                 TuningInsertVZEROUPPER]>;
+ def : ProcModel<"knm", HaswellModel, ProcessorFeatures.KNMFeatures,
+                 ProcessorFeatures.KNLTuning>;
+ 
+diff --git a/llvm/lib/Target/X86/X86Subtarget.cpp b/llvm/lib/Target/X86/X86Subtarget.cpp
+index ed2da3128..10d366133 100644
+--- a/llvm/lib/Target/X86/X86Subtarget.cpp
++++ b/llvm/lib/Target/X86/X86Subtarget.cpp
+@@ -256,6 +256,11 @@ void X86Subtarget::initSubtargetFeatures(StringRef CPU, StringRef TuneCPU,
+ 
+   std::string FullFS = X86_MC::ParseX86Triple(TargetTriple);
+   assert(!FullFS.empty() && "Failed to parse X86 triple");
++  // Intel Phi 3120A project: the triple's implicit "+sse2" is applied after
++  // the CPU's own features and would turn SSE back on for "knc", which has
++  // no SSE (ISA 327364, appendix B).
++  if (CPU == "knc")
++    FullFS = X86_MC::dropTripleSSE2(FullFS);
+ 
+   if (!FS.empty())
+     FullFS = (Twine(FullFS) + "," + FS).str();
+diff --git a/llvm/lib/TargetParser/X86TargetParser.cpp b/llvm/lib/TargetParser/X86TargetParser.cpp
+index ad1c0011b..1ee288e4b 100644
+--- a/llvm/lib/TargetParser/X86TargetParser.cpp
++++ b/llvm/lib/TargetParser/X86TargetParser.cpp
+@@ -87,6 +87,12 @@ constexpr FeatureBitset FeaturesKNL =
+     FeaturesBroadwell | FeatureAES | FeatureAVX512F | FeatureAVX512CD;
+ constexpr FeatureBitset FeaturesKNM = FeaturesKNL | FeatureAVX512VPOPCNTDQ;
+ 
++// Intel Knights Corner (Xeon Phi x100; Intel Phi 3120A project): no CMOV,
++// MMX or SSE (ISA reference 327364, appendix B). The vector unit is a
++// backend feature with no frontend name yet.
++constexpr FeatureBitset FeaturesKNC =
++    FeatureX87 | FeatureCMPXCHG8B | FeatureFXSR | Feature64BIT;
++
+ // Intel Skylake processors.
+ constexpr FeatureBitset FeaturesSkylakeClient =
+     FeaturesBroadwell | FeatureAES | FeatureCLFLUSHOPT | FeatureXSAVEC |
+@@ -421,6 +427,8 @@ constexpr EnumStringDef<ProcInfo> ProcessorDefs[] = {
+   { {"mic_avx512"}, {CK_KNL, FEATURE_AVX512F, FeaturesKNL, 'Z', true} },
+   // Knights Mill processor.
+   { {"knm"}, {CK_KNM, FEATURE_AVX5124FMAPS, FeaturesKNM, 'j', false} },
++  // Knights Corner processor.
++  { {"knc"}, {CK_KNC, ~0U, FeaturesKNC, '\0', false} },
+   // Lakemont microarchitecture based processors.
+   { {"lakemont"}, {CK_Lakemont, ~0U, FeatureCMPXCHG8B, '\0', false} },
+   // K6 architecture processors.

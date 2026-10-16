@@ -14,7 +14,7 @@ mkdir -p "$pkg/bin" "$pkg/lib/clang/$ver/lib/linux"
 cp "$B/bin/clang-$ver" "$pkg/bin/"; for n in clang clang++ cc c++; do ln -sfn "clang-$ver" "$pkg/bin/$n"; done
 cp "$B/bin/lld" "$pkg/bin/"; for n in ld.lld ld; do ln -sfn lld "$pkg/bin/$n"; done
 for t in llvm-ar llvm-ranlib llvm-nm llvm-objdump llvm-strip llvm-readelf llvm-objcopy; do cp "$B/bin/$t" "$pkg/bin/"; ln -sfn "$t" "$pkg/bin/${t#llvm-}"; done
-sed "s|^--sysroot=.*|--sysroot=$PREFIX|" "$PHI_STACK_ROOT/card/userland/components/clang.cfg" > "$out/clang.cfg"
+{ cat "$llvm_root/config/knc.cfg"; echo "--sysroot=$PREFIX"; } > "$out/clang.cfg"
 for n in clang clang++ cc c++; do cp "$out/clang.cfg" "$pkg/bin/$n.cfg"; done
 mkdir -p "$pkg/usr"; cp -a "$SYSROOT/usr/include" "$SYSROOT/usr/lib" "$pkg/usr/"
 cp -a "$RES/include" "$pkg/lib/clang/$ver/include"

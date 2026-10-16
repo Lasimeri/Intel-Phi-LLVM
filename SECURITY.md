@@ -36,16 +36,20 @@ all run offline.
 
 ## Compiled output
 
-The `knc` CPU will carry hardening defaults. Each one becomes a default
-only after it is shown to work on a card (stage S1). Candidates:
+`config/knc.cfg` carries the defaults. Each one was verified on card 0 by
+`scripts/hardening-check.sh` before it went in (2026-10-15):
 
 | Measure | Status on KNC |
 | --- | --- |
-| `-fstack-protector-strong` | Candidate: needs musl's TLS canary at `%fs:0x28` and `__stack_chk_fail`. To be verified on a card. |
-| static PIE, RELRO, `-z now`, `-z noexecstack` | Candidate: linker-side, ISA-neutral. To be verified with the card kernel's loader. |
-| `-fstack-clash-protection` | Candidate: stack probes are plain loads, ISA-neutral. |
-| `-fcf-protection` | Off, as in the stack's `knc-cc` today: `endbr64` is not in the KNC instruction list (ISA reference 327364, appendix B is the authority to cite when verified). |
-| `_FORTIFY_SOURCE` | Not provided by musl itself; out of scope. |
+| `-fstack-protector-strong` | Default. musl's canary at `%fs:0x28`; an overflowing copy is stopped on the card (exit 139) |
+| static PIE (`-fPIE -static-pie`) | Default. Two runs on the card load at two different addresses; card `randomize_va_space` 2 |
+| RELRO, `-z now`, `-z noexecstack` | Default. `GNU_RELRO`, `BIND_NOW`, `GNU_STACK` RW; the card CPU reports `nx` |
+| `-fstack-clash-protection` | Default. Large frames are probed; runs on the card |
+| `-fcf-protection` | Off: `endbr64` is not in the KNC instruction list (the stack's `knc-cc` has always passed `-fcf-protection=none`) |
+| `_FORTIFY_SOURCE` | Not provided by musl itself; out of scope |
+
+The stack's own `knc-cc` and card `clang.cfg` keep their flags until it
+adopts `config/knc.cfg`.
 
 ## Reporting
 

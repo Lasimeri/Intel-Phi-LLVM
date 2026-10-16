@@ -1,0 +1,42 @@
+diff --git a/clang/lib/Basic/Targets/X86.cpp b/clang/lib/Basic/Targets/X86.cpp
+index 8ab39b750..5f1b38a75 100644
+--- a/clang/lib/Basic/Targets/X86.cpp
++++ b/clang/lib/Basic/Targets/X86.cpp
+@@ -153,8 +153,10 @@ bool X86TargetInfo::initFeatureMap(
+     llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags, StringRef CPU,
+     const std::vector<std::string> &FeaturesVec) const {
+   // FIXME: This *really* should not be here.
+-  // X86_64 always has SSE2.
+-  if (getTriple().getArch() == llvm::Triple::x86_64)
++  // X86_64 always has SSE2, except Knights Corner (Intel Phi 3120A project:
++  // ISA reference 327364, appendix B).
++  if (getTriple().getArch() == llvm::Triple::x86_64 &&
++      llvm::X86::parseArchX86(CPU) != llvm::X86::CK_KNC)
+     setFeatureEnabled(Features, "sse2", true);
+ 
+   using namespace llvm::X86;
+@@ -656,6 +658,14 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
+     break;
+   case CK_KNM:
+     break;
++  case CK_KNC:
++    // Intel Phi 3120A project: the macros the Intel compiler predefines for
++    // Knights Corner (-mmic): __MIC__ and __KNC__, both 1 (Intel C++ Compiler
++    // documentation, "Using Predefined Preprocessor Symbols").
++    defineCPUMacros(Builder, "knc");
++    Builder.defineMacro("__MIC__");
++    Builder.defineMacro("__KNC__");
++    break;
+   case CK_Lakemont:
+     defineCPUMacros(Builder, "i586", /*Tuning*/false);
+     defineCPUMacros(Builder, "pentium", /*Tuning*/false);
+@@ -1653,6 +1663,9 @@ std::optional<unsigned> X86TargetInfo::getCPUCacheLineSize() const {
+     case CK_Diamondrapids:
+     case CK_KNL:
+     case CK_KNM:
++    // Knights Corner: 64-byte lines in L1 and L2 (Intel Xeon Phi Coprocessor
++    // System Software Developers Guide 328207, the cache table).
++    case CK_KNC:
+     // K7
+     case CK_Athlon:
+     case CK_AthlonXP:
