@@ -34,8 +34,22 @@ grep -q 'fldl' "$w/rmul.txt" && grep -q 'fmull' "$w/rmul.txt" && echo "probe: x8
 if [ -d "$("$RUSTC" --print sysroot)/lib/rustlib/src/rust/library" ]; then
     cp -r "$PHI_STACK_ROOT/toolchain/check/hello_rs" "$w/hello_rs"; rm -rf "$w/hello_rs/target"
     sed -i "s|\.\./\.\./rust/|$PHI_STACK_ROOT/toolchain/rust/|; s|\.\./\.\./clang/|$PHI_STACK_ROOT/toolchain/clang/|" "$w/hello_rs/.cargo/config.toml"
-    (cd "$w/hello_rs" && PHI_LLVM="$llvm_build/llvm" "$CARGO" -Zjson-target-spec build --release)
+    (cd "$w/hello_rs" && RUSTC="$RUSTC" PHI_LLVM="$llvm_build/llvm" "$CARGO" -Zjson-target-spec build --release)
     "$PHI_STACK_ROOT/host/target/debug/phi-isa-audit" --ignore XSAVE "$w/hello_rs/target/x86_64-knc-linux-musl/release/libhello_rs.a"
 else
     echo "build-std: SKIPPED, rust-src not installed (sudo pacman -S --needed rust-src)"
+fi
+# The linked program: the stack's hello.c with the Rust half (as its P2
+# check, toolchain/check/run.sh), on this clang and sysroot; audited, run
+# on the host, and on card PHI_RUST_CARD when set.
+lib="$w/hello_rs/target/x86_64-knc-linux-musl/release/libhello_rs.a"
+if [ -f "$lib" ]; then
+    PHI_LLVM="$llvm_build/llvm" PHI_SYSROOT="$llvm_build/sysroot" "$PHI_STACK_ROOT/toolchain/clang/knc-cc" -O2 -static \
+        -o "$w/hello" "$PHI_STACK_ROOT/toolchain/check/hello.c" -DHAVE_RUST "$lib" -lunwind -lm -lpthread
+    "$PHI_STACK_ROOT/host/target/debug/phi-isa-audit" "$w/hello" | tail -1
+    "$w/hello"; echo "hello exit $? (host)"
+    if [ -n "${PHI_RUST_CARD:-}" ]; then
+        phi -c "$PHI_RUST_CARD" put "$w/hello" /data/llvm-knc-hello >/dev/null
+        phi -c "$PHI_RUST_CARD" run sh -c "chmod +x /data/llvm-knc-hello; /data/llvm-knc-hello; echo \"hello exit \$? (card $PHI_RUST_CARD)\"; rm -f /data/llvm-knc-hello"
+    fi
 fi

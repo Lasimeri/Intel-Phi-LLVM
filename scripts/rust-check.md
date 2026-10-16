@@ -21,3 +21,18 @@ own differently named LLVM.
 
 Linker: the stack's `knc-cc` with `PHI_LLVM` pointing at this repository's
 clang install.
+
+4. **Linked program:** after build-std, the stack's
+   `toolchain/check/hello.c` is linked with `-DHAVE_RUST`, the Rust static
+   library and `-lunwind` (the stack's P2 check), using this clang and
+   sysroot. The program is audited and run on the host, and with
+   `PHI_RUST_CARD=N` also on card N.
+
+`cargo` is given `RUSTC=/usr/bin/rustc`. Without it, cargo runs the
+rustup `rustc` that comes first on the rack's `PATH` (measured
+2026-10-15), and that toolchain has neither rust-src nor the patched
+LLVM.
+
+Network: build-std downloads std's dependency crates from crates.io
+(`getopts`, `object`, `gimli` and others), pinned by the checksums in
+rust-src's own `Cargo.lock`. `SECURITY.md` lists this.

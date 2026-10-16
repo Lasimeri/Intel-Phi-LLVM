@@ -12,8 +12,15 @@ beyond its directory, and compiled programs weaker than they need to be.
 | MPSS sources (oracle) | SHA-256 of the outer tar and of the inner binutils tarball, in `oracle/SHA256SUMS` | `oracle/build-binutils.sh`, before extraction |
 | Patches | git history of this repository | `git apply` onto the pristine verified tree; a patch that does not apply exactly stops the build |
 
-`scripts/build.sh fetch` is the only step that uses the network. Configure,
-build, install, check and the oracle all run offline.
+Two steps use the network:
+
+- `scripts/build.sh fetch`, verified against the pinned commit;
+- `scripts/rust-check.sh`, whose `cargo -Zbuild-std` downloads std's
+  dependency crates from crates.io. They are pinned by the checksums in
+  rust-src's own `Cargo.lock` (Arch package `rust-src`).
+
+Configure, build, install, the runtimes, the card checks and the oracle
+all run offline.
 
 ## Isolation
 
