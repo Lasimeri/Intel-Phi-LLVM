@@ -1,8 +1,10 @@
 # patches
 
-Ten patches against `llvmorg-23.1.1` (commit `6dfe1677` in `SERIES`), the LLVM
+Fifteen patches against `llvmorg-23.1.1` (commit `6dfe1677` in `SERIES`), the LLVM
 Arch ships in `llvm-libs` (decision D1), applied by `scripts/build.sh` before it
-configures. Imported from Intel-Phi-3120A `toolchain/llvm/patches` at cce74b6
+configures: 0001 to 0010 scalar, 0011 and 0012 the `knc` CPU (S1), 0013 to
+0015 the MVEX MC layer (S2). The first ten were
+imported from Intel-Phi-3120A `toolchain/llvm/patches` at cce74b6
 (against 22.1.8) and rebased 2026-10-15: every hunk applied unchanged, only
 line offsets and index lines moved. Named `NNNN-<summary>.patch`; each is a
 plain `git diff` of one step (not `git format-patch` mail), carrying the
@@ -30,3 +32,17 @@ idempotent.
 
 Checked by `scripts/march-check.sh` (byte-identical to `knc-cc`'s flags
 on 1,359 sources) and `scripts/hardening-check.sh`.
+
+## The MVEX MC layer (S2, 2026-10-16)
+
+| Patch | Files | Change |
+| --- | --- | --- |
+| 0013 | `X86InstrKNC.td` (generated), `X86InstrFormats.td`, `X86InstrPredicates.td`, `X86InstrInfo.td`, `MCTargetDesc/X86BaseInfo.h`, `MCTargetDesc/X86KNCInfo.{h,cpp,inc}` (`.inc` generated), `MCTargetDesc/CMakeLists.txt`, `MCTargetDesc/X86MCCodeEmitter.cpp`, `utils/TableGen/X86InstrMappingEmitter.cpp`, `utils/TableGen/X86FoldTablesEmitter.cpp` | 330 KNC defs from `tools/knc-gen.c`, all `isCodeGenOnly`, marked `KNCEnc`; `isMVEX` (TSFlags bit 55, `X86II::MVEX`) and `HasKNC`; the side table of forms, operands and decoration tables; prefix kind `MVEX` (62h, P0 bit 3 and P1 bit 2 clear, P2 = E SSS V' aaa) and disp8*N from the memory conversion and SSS; the trailing E/SSS operand is not emitted as an immediate; the EVEX-compression and fold-table backends skip `KNCEnc` |
+| 0014 | `AsmParser/X86AsmParser.cpp`, `MCTargetDesc/X86InstPrinterCommon.{h,cpp}`, `MCTargetDesc/X86ATTInstPrinter.{h,cpp}`, `MCTargetDesc/X86IntelInstPrinter.{h,cpp}` | Under `knc`, KNC mnemonics and pseudo-ops are parsed with the ordinary operand parsers plus a decoration reader, matched form by form from the table, and emitted; the gas-compatible rules in `docs/results/2026-10-16-s2-mc-layer.md`; `.allow_index_reg` accepted; both printers print KNC forms from the table |
+| 0015 | `Disassembler/X86Disassembler.cpp` | Under `knc`, 62h with P1 bit 2 clear (MVEX) and the KNC VEX forms are decoded from the table; anything else falls through to the generic decoder |
+
+Checked by `oracle/k1omni-check.sh` (Intel's 6,708 K1OM test
+instructions, round trips, text), `oracle/knc-mvex-check.sh` (830
+knc-mvex vectors), `scripts/mc-regress.sh` (1,086 other assemblies
+unchanged), `scripts/mvex-card-check.sh` (card 0) and
+`scripts/check-knc-gen.sh` (the generated files reproduce).

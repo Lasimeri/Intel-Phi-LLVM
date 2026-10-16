@@ -1,0 +1,588 @@
+diff --git a/llvm/lib/Target/X86/AsmParser/X86AsmParser.cpp b/llvm/lib/Target/X86/AsmParser/X86AsmParser.cpp
+index 54edcba34..35f0f4c67 100644
+--- a/llvm/lib/Target/X86/AsmParser/X86AsmParser.cpp
++++ b/llvm/lib/Target/X86/AsmParser/X86AsmParser.cpp
+@@ -9,6 +9,7 @@
+ #include "MCTargetDesc/X86BaseInfo.h"
+ #include "MCTargetDesc/X86EncodingOptimization.h"
+ #include "MCTargetDesc/X86IntelInstPrinter.h"
++#include "MCTargetDesc/X86KNCInfo.h"
+ #include "MCTargetDesc/X86MCAsmInfo.h"
+ #include "MCTargetDesc/X86MCExpr.h"
+ #include "MCTargetDesc/X86MCTargetDesc.h"
+@@ -1185,6 +1186,14 @@ private:
+   bool ParseMasmOperator(unsigned OpKind, int64_t &Val);
+   bool ParseRoundingModeOp(SMLoc Start, OperandVector &Operands);
+   bool parseCFlagsOp(OperandVector &Operands);
++
++  // Knights Corner (MVEX and the KNC VEX forms): parsed and matched from the
++  // X86KNCInfo table, emitted from KNCInst by matchAndEmitInstruction.
++  bool parseKNCInstruction(StringRef Name, SMLoc NameLoc,
++                           OperandVector &Operands);
++  bool parseKNCDecoration(std::string &Tok, MCRegister &Mask, SMLoc &Loc);
++  MCInst KNCInst;
++  bool HasKNCInst = false;
+   bool ParseIntelNamedOperator(StringRef Name, IntelExprStateMachine &SM,
+                                bool &ParseError, SMLoc &End);
+   bool ParseMasmNamedOperator(StringRef Name, IntelExprStateMachine &SM,
+@@ -3051,6 +3060,300 @@ bool X86AsmParser::HandleAVX512Operand(OperandVector &Operands) {
+   return false;
+ }
+ 
++/// Parse one {...} decoration of a Knights Corner operand: a write mask
++/// ({%k1}, {k1}) into Mask, anything else ({cdab}, {1to16}, {float16},
++/// {rn-sae}, {eh}) into Tok as written, braces included, in lower case.
++bool X86AsmParser::parseKNCDecoration(std::string &Tok, MCRegister &Mask,
++                                      SMLoc &Loc) {
++  MCAsmParser &Parser = getParser();
++  Loc = consumeToken(); // '{'
++  Tok.clear();
++  Mask = MCRegister();
++  StringRef Id = getLexer().is(AsmToken::Identifier)
++                     ? Parser.getTok().getIdentifier()
++                     : StringRef();
++  bool IsMask = getLexer().is(AsmToken::Percent) ||
++                (Id.size() == 2 && (Id[0] == 'k' || Id[0] == 'K') &&
++                 Id[1] >= '0' && Id[1] <= '7');
++  if (IsMask) {
++    SMLoc S, E;
++    if (parseRegister(Mask, S, E))
++      return true;
++    if (!getX86MCRegisterClass(X86::VK16RegClassID).contains(Mask))
++      return Error(S, "expected a mask register");
++  } else {
++    std::string T = "{";
++    while (getLexer().isNot(AsmToken::RCurly)) {
++      if (getLexer().is(AsmToken::EndOfStatement) ||
++          getLexer().is(AsmToken::Eof))
++        return Error(Loc, "expected '}'");
++      T += Parser.getTok().getString().lower();
++      Parser.Lex();
++    }
++    Tok = T + "}";
++  }
++  if (getLexer().isNot(AsmToken::RCurly))
++    return Error(Parser.getTok().getLoc(), "expected '}'");
++  Parser.Lex();
++  return false;
++}
++
++/// Parse and match a Knights Corner instruction. The operands are parsed
++/// with the ordinary AT&T or Intel operand parsers, their {...} decorations
++/// here; the forms of the mnemonic in X86KNCInfo are tried in order and the
++/// first that takes the operands builds KNCInst.
++bool X86AsmParser::parseKNCInstruction(StringRef Name, SMLoc NameLoc,
++                                       OperandVector &Operands) {
++  MCAsmParser &Parser = getParser();
++  struct KOp {
++    std::unique_ptr<X86Operand> Op;
++    MCRegister Mask;
++    SmallVector<std::string, 2> Decos;
++  };
++  SmallVector<KOp, 5> Ops;
++  std::string Round; // a decoration on its own: {rn}, {rz-sae}, {sae}
++
++  std::string Lower = Name.lower();
++  StringRef Mnem = Lower;
++  int PseudoImm = -1;
++  if (X86KNC::lookupMnemonic(Lower).empty())
++    if (const X86KNC::PseudoOp *P = X86KNC::lookupPseudo(Lower)) {
++      Mnem = P->Base;
++      if (P->Imm != 0xff)
++        PseudoImm = P->Imm;
++    }
++
++  Operands.push_back(X86Operand::CreateToken(Name, NameLoc));
++  if (getLexer().isNot(AsmToken::EndOfStatement)) {
++    while (true) {
++      if (getLexer().is(AsmToken::LCurly)) {
++        MCRegister M;
++        SMLoc L;
++        if (parseKNCDecoration(Round, M, L))
++          return true;
++        if (M)
++          return Error(L, "unexpected write mask");
++      } else {
++        SMLoc Loc = Parser.getTok().getLoc();
++        SmallVector<std::unique_ptr<MCParsedAsmOperand>, 2> One;
++        if (isParsingIntelSyntax() ? parseIntelOperand(One, Name)
++                                   : parseATTOperand(One))
++          return true;
++        if (One.size() != 1)
++          return Error(Loc, "unexpected operand");
++        KOp K;
++        K.Op.reset(static_cast<X86Operand *>(One[0].release()));
++        if (!K.Op->isReg() && !K.Op->isMem() && !K.Op->isImm())
++          return Error(Loc, "unexpected operand");
++        while (getLexer().is(AsmToken::LCurly)) {
++          std::string T;
++          MCRegister M;
++          SMLoc L;
++          if (parseKNCDecoration(T, M, L))
++            return true;
++          if (M) {
++            if (K.Mask)
++              return Error(L, "more than one write mask");
++            K.Mask = M;
++          } else {
++            K.Decos.push_back(T);
++          }
++        }
++        Ops.push_back(std::move(K));
++      }
++      if (getLexer().isNot(AsmToken::Comma))
++        break;
++      Parser.Lex();
++    }
++    if (getLexer().isNot(AsmToken::EndOfStatement))
++      return TokError("unexpected token in argument list");
++  }
++  Parser.Lex(); // Consume the EndOfStatement.
++
++  // The table lists operands in Intel order.
++  if (!isParsingIntelSyntax())
++    std::reverse(Ops.begin(), Ops.end());
++
++  auto InClass = [&](unsigned RC, MCRegister R) {
++    return R && getX86MCRegisterClass(RC).contains(R);
++  };
++  ArrayRef<X86KNC::Insn> Forms = X86KNC::lookupMnemonic(Mnem);
++
++  auto Try = [&](const X86KNC::Insn &I, MCInst &Inst) -> bool {
++    unsigned NumParsed = I.NumOps - (PseudoImm >= 0 ? 1 : 0);
++    if (Ops.size() != NumParsed)
++      return false;
++    unsigned E = 0, SSS = 0;
++    bool HaveConv = false;
++    MCRegister Mask;
++    unsigned Tab = I.MemTab ? I.MemTab : I.Reg0Tab;
++    for (unsigned J = 0; J != I.NumOps; ++J) {
++      const X86KNC::OperandDesc &D = I.Ops[J];
++      if (J >= Ops.size()) { // the immediate of a pseudo-op
++        if (D.Kind != X86KNC::K_IMM)
++          return false;
++        continue;
++      }
++      const KOp &K = Ops[J];
++      const X86Operand &Op = *K.Op;
++      switch (D.Kind) {
++      case X86KNC::K_VR:
++        if (!Op.isReg() || !(InClass(X86::VR512RegClassID, Op.getReg()) ||
++                             ((D.Flags & X86KNC::F_HALF) &&
++                              InClass(X86::VR256XRegClassID, Op.getReg()))))
++          return false;
++        break;
++      case X86KNC::K_KR:
++        if (!Op.isReg() || !InClass(X86::VK16RegClassID, Op.getReg()))
++          return false;
++        break;
++      case X86KNC::K_GR32:
++        if (!Op.isReg() || !InClass(X86::GR32RegClassID, Op.getReg()))
++          return false;
++        break;
++      case X86KNC::K_GR64:
++        if (!Op.isReg() || !InClass(X86::GR64RegClassID, Op.getReg()))
++          return false;
++        break;
++      case X86KNC::K_MEM:
++      case X86KNC::K_M8:
++        if (!Op.isMem() || InClass(X86::VR512RegClassID, Op.getMemIndexReg()))
++          return false;
++        break;
++      case X86KNC::K_VSIB:
++        if (!Op.isMem() || !InClass(X86::VR512RegClassID, Op.getMemIndexReg()))
++          return false;
++        break;
++      case X86KNC::K_IMM:
++        if (!Op.isImm())
++          return false;
++        break;
++      }
++      if (K.Mask) {
++        if (!(D.Flags & X86KNC::F_MASK))
++          return false;
++        Mask = K.Mask;
++      }
++      for (const std::string &T : K.Decos) {
++        if (T == "{eh}") {
++          // On memory the eviction hint; on the register source of a
++          // load-op form MVEX.E = 1 as well (gas: %zmm3{eh}).
++          bool RegSrc = !I.isMemForm() && (D.Flags & X86KNC::F_CONV);
++          if (!(D.Flags & X86KNC::F_EH) && !RegSrc)
++            return false;
++          if (I.EH != 2 || E)
++            return false;
++          E = 1;
++          continue;
++        }
++        if (!(D.Flags & X86KNC::F_CONV) || HaveConv)
++          return false;
++        int S = X86KNC::findDeco(X86KNC::getDecoTable(Tab), T);
++        if (S < 0)
++          return false;
++        SSS = S;
++        HaveConv = true;
++      }
++    }
++    if (!Round.empty()) {
++      if (I.isMemForm() || !I.Reg1Tab || E)
++        return false;
++      const X86KNC::DecoTable &R = X86KNC::getDecoTable(I.Reg1Tab);
++      if (R.Valid == 0xff) {
++        // Static rounding (Intel 327364-001, table 2.14); {sae} alone is
++        // {rn-sae}. It replaces the swizzle, so the two do not mix.
++        int S = X86KNC::findDeco(R, Round);
++        if (S < 0 && Round == "{sae}")
++          S = 4;
++        if (S < 0 || HaveConv)
++          return false;
++        SSS = S;
++      } else {
++        // SAE only: MVEX.E = 1; SSS keeps a swizzle when one is written,
++        // else 100 (as gas encodes {sae} and {sae} with a swizzle).
++        if (Round != "{sae}")
++          return false;
++        if (!HaveConv)
++          SSS = 4;
++      }
++      E = 1;
++    }
++    if (I.EH != 2)
++      E = I.EH;
++    // vprefetch*/clevict* have a VEX and an MVEX form; the MVEX one only
++    // when its disp8*64 is shorter than the VEX disp32 (as gas chooses).
++    if (I.Ops[0].Kind == X86KNC::K_M8 && Forms.size() > 1) {
++      const X86Operand &M = *Ops[0].Op;
++      int64_t Disp;
++      bool Short = false;
++      MCRegister Base = M.getMemBaseReg();
++      if (Base && Base != X86::RIP && Base != X86::EIP &&
++          M.getMemDisp()->evaluateAsAbsolute(Disp))
++        Short = !isInt<8>(Disp) && Disp % 64 == 0 && isInt<8>(Disp / 64);
++      if (Short != bool(I.MVEX))
++        return false;
++    }
++
++    Inst.clear();
++    Inst.setOpcode(I.Opcode);
++    for (unsigned Pos = 0;;) {
++      if (int(Pos) == I.MaskMI) {
++        Inst.addOperand(MCOperand::createReg(Mask ? Mask : MCRegister(X86::K0)));
++        ++Pos;
++        continue;
++      }
++      if (int(Pos) == I.SSSMI) {
++        Inst.addOperand(MCOperand::createImm(E << 3 | SSS));
++        ++Pos;
++        continue;
++      }
++      unsigned J = 0;
++      while (J != I.NumOps && I.Ops[J].MI != Pos)
++        ++J;
++      if (J == I.NumOps)
++        break;
++      const X86KNC::OperandDesc &D = I.Ops[J];
++      if (J >= Ops.size()) {
++        Inst.addOperand(MCOperand::createImm(PseudoImm));
++        ++Pos;
++      } else if (D.Kind == X86KNC::K_MEM || D.Kind == X86KNC::K_VSIB ||
++                 D.Kind == X86KNC::K_M8) {
++        Ops[J].Op->addMemOperands(Inst, 5);
++        // DS is the default segment unless the base is RSP or RBP; gas
++        // drops an explicit ds: there, and so does the KNC path.
++        MCOperand &Seg = Inst.getOperand(Inst.getNumOperands() - 1);
++        MCRegister Base = Inst.getOperand(Inst.getNumOperands() - 5).getReg();
++        if (Seg.getReg() == X86::DS && Base != X86::RSP && Base != X86::RBP &&
++            Base != X86::ESP && Base != X86::EBP)
++          Seg.setReg(MCRegister());
++        Pos += 5;
++      } else if (D.Kind == X86KNC::K_IMM) {
++        Ops[J].Op->addImmOperands(Inst, 1);
++        ++Pos;
++      } else {
++        MCRegister R = Ops[J].Op->getReg();
++        if (InClass(X86::VR256XRegClassID, R)) // a half source: zmm in MCInst
++          R = getX86MCRegisterClass(X86::VR512RegClassID)
++                  .getRegister(getContext().getRegisterInfo()->getEncodingValue(R));
++        Inst.addOperand(MCOperand::createReg(R));
++        ++Pos;
++      }
++    }
++    return true;
++  };
++
++  for (const X86KNC::Insn &I : Forms) {
++    MCInst Inst;
++    if (Try(I, Inst)) {
++      KNCInst = Inst;
++      HasKNCInst = true;
++      return false;
++    }
++  }
++  return Error(NameLoc, "invalid operands for Knights Corner instruction '" +
++                            Lower + "'");
++}
++
+ /// Returns false if okay and true if there was an overflow.
+ bool X86AsmParser::CheckDispOverflow(MCRegister BaseReg, MCRegister IndexReg,
+                                      const MCExpr *Disp, SMLoc Loc) {
+@@ -3382,6 +3685,15 @@ bool X86AsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
+ 
+   StringRef PatchedName = Name;
+ 
++  // Knights Corner vector, mask and scalar instructions have their own
++  // operand decorations ({cdab}, {float16}, {rn-sae}, {eh}) and their own
++  // table of forms.
++  if (getSTI().hasFeature(X86::FeatureKNC)) {
++    std::string Lower = Name.lower();
++    if (!X86KNC::lookupMnemonic(Lower).empty() || X86KNC::lookupPseudo(Lower))
++      return parseKNCInstruction(Name, NameLoc, Operands);
++  }
++
+   // Hack to skip "short" following Jcc.
+   if (isParsingIntelSyntax() &&
+       (PatchedName == "jmp" || PatchedName == "jc" || PatchedName == "jnc" ||
+@@ -4244,6 +4556,22 @@ bool X86AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
+   assert(!Operands.empty() && "Unexpect empty operand list!");
+   assert((*Operands[0]).isToken() && "Leading operand should always be a mnemonic!");
+ 
++  // A Knights Corner instruction was matched while parsing.
++  if (HasKNCInst) {
++    HasKNCInst = false;
++    unsigned Flags = KNCInst.getFlags();
++    if (ForcedDispEncoding == DispEncoding_Disp8)
++      Flags |= X86::IP_USE_DISP8;
++    else if (ForcedDispEncoding == DispEncoding_Disp32)
++      Flags |= X86::IP_USE_DISP32;
++    KNCInst.setFlags(Flags);
++    KNCInst.setLoc(IDLoc);
++    Opcode = KNCInst.getOpcode();
++    if (!MatchingInlineAsm)
++      Out.emitInstruction(KNCInst, getSTI());
++    return false;
++  }
++
+   // First, handle aliases that expand to multiple instructions.
+   MatchFPUWaitAlias(IDLoc, static_cast<X86Operand &>(*Operands[0]), Operands,
+                     Out, MatchingInlineAsm);
+@@ -4821,6 +5149,10 @@ bool X86AsmParser::ParseDirective(AsmToken DirectiveID) {
+                                            "a '%' prefix in .intel_syntax");
+     }
+     return false;
++  } else if (IDVal == ".allow_index_reg") {
++    // GNU as: allow %eiz/%riz as an index register, which this parser always
++    // does (the K1OM test suite of Intel's gas starts with it).
++    return getParser().parseEOL();
+   } else if (IDVal == ".nops")
+     return parseDirectiveNops(DirectiveID.getLoc());
+   else if (IDVal == ".even")
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86ATTInstPrinter.cpp b/llvm/lib/Target/X86/MCTargetDesc/X86ATTInstPrinter.cpp
+index 564636959..ab4e75ddb 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86ATTInstPrinter.cpp
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86ATTInstPrinter.cpp
+@@ -64,6 +64,12 @@ void X86ATTInstPrinter::printInst(const MCInst *MI, uint64_t Address,
+ 
+   printInstFlags(MI, OS, STI);
+ 
++  // Knights Corner forms (X86KNCInfo).
++  if (printKNCInst(MI, OS, /*Intel=*/false)) {
++    printAnnotation(OS, Annot);
++    return;
++  }
++
+   // Output CALLpcrel32 as "callq" in 64-bit mode.
+   // In Intel annotation it's always emitted as "call".
+   //
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86ATTInstPrinter.h b/llvm/lib/Target/X86/MCTargetDesc/X86ATTInstPrinter.h
+index 1452622eb..1fda24a75 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86ATTInstPrinter.h
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86ATTInstPrinter.h
+@@ -44,6 +44,10 @@ public:
+ 
+   void printOperand(const MCInst *MI, unsigned OpNo, raw_ostream &OS) override;
+   void printMemReference(const MCInst *MI, unsigned Op, raw_ostream &OS);
++  void printKNCMemReference(const MCInst *MI, unsigned Op,
++                            raw_ostream &OS) override {
++    printMemReference(MI, Op, OS);
++  }
+   void printMemOffset(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
+   void printSrcIdx(const MCInst *MI, unsigned Op, raw_ostream &O);
+   void printDstIdx(const MCInst *MI, unsigned Op, raw_ostream &O);
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86InstPrinterCommon.cpp b/llvm/lib/Target/X86/MCTargetDesc/X86InstPrinterCommon.cpp
+index 88dd5431f..308f977b6 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86InstPrinterCommon.cpp
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86InstPrinterCommon.cpp
+@@ -13,6 +13,9 @@
+ 
+ #include "X86InstPrinterCommon.h"
+ #include "X86BaseInfo.h"
++#include "X86KNCInfo.h"
++#include "X86MCTargetDesc.h"
++#include "llvm/MC/MCRegisterInfo.h"
+ #include "llvm/MC/MCAsmInfo.h"
+ #include "llvm/MC/MCExpr.h"
+ #include "llvm/MC/MCInst.h"
+@@ -467,3 +470,114 @@ void X86InstPrinterCommon::printVKPair(const MCInst *MI, unsigned OpNo,
+   }
+   llvm_unreachable("Unknown mask pair register name");
+ }
++
++/// Print a Knights Corner instruction from its X86KNCInfo row: operands in
++/// Intel order (reversed for AT&T), the write mask and the swizzle or
++/// conversion on the operands that carry them, {eh} on memory, and the
++/// rounding or SAE decoration on its own (first in AT&T, last in Intel).
++/// What it prints assembles back to the same bytes.
++bool X86InstPrinterCommon::printKNCInst(const MCInst *MI, raw_ostream &OS,
++                                        bool Intel) {
++  const X86KNC::Insn *I = X86KNC::lookupOpcode(MI->getOpcode());
++  if (!I)
++    return false;
++  unsigned Bits = X86KNC::getMVEXBits(*MI);
++  bool E = I->EH == 2 && (Bits >> 3 & 1); // a fixed E is in the mnemonic
++  unsigned SSS = Bits & 7;
++  StringRef Mnem = I->Mnemonic;
++  unsigned NumOps = I->NumOps;
++  if (NumOps && I->Ops[NumOps - 1].Kind == X86KNC::K_IMM) {
++    const MCOperand &Imm = MI->getOperand(I->Ops[NumOps - 1].MI);
++    if (Imm.isImm())
++      if (const X86KNC::PseudoOp *P = X86KNC::findPseudo(Mnem, Imm.getImm())) {
++        Mnem = P->Pseudo;
++        --NumOps;
++      }
++  }
++
++  // The decorations.
++  bool RegForm = !I->isMemForm();
++  std::string Round, Conv;
++  bool RegEH = false, MemEH = false;
++  if (I->SSSMI >= 0) {
++    const X86KNC::DecoTable &T =
++        X86KNC::getDecoTable(I->MemTab ? I->MemTab : I->Reg0Tab);
++    auto Swizzle = [&](bool ShowDefault) -> std::string {
++      if (!SSS)
++        return ShowDefault && T.Alias[0] ? T.Alias : "";
++      return T.Tok[SSS];
++    };
++    if (RegForm && E) {
++      const X86KNC::DecoTable *R =
++          I->Reg1Tab ? &X86KNC::getDecoTable(I->Reg1Tab) : nullptr;
++      if (R && R->Valid == 0xff) {
++        Round = R->Tok[SSS];
++      } else if (R) {
++        // SAE only: SSS 100 is plain {sae}; anything else is a swizzle
++        // written next to it ({dcba} for 000).
++        Round = "{sae}";
++        if (SSS != 4)
++          Conv = Swizzle(true);
++      } else {
++        RegEH = true; // MVEX.E on a register source: %zmm3{eh}
++        Conv = Swizzle(false);
++      }
++    } else {
++      Conv = Swizzle(false);
++      MemEH = E;
++    }
++  }
++
++  OS << '\t' << Mnem;
++  bool First = true;
++  auto Sep = [&] {
++    OS << (First ? "\t" : ", ");
++    First = false;
++  };
++  if (!Intel && !Round.empty()) {
++    Sep();
++    OS << Round;
++  }
++  for (unsigned K = 0; K != NumOps; ++K) {
++    unsigned J = Intel ? K : NumOps - 1 - K;
++    const X86KNC::OperandDesc &D = I->Ops[J];
++    Sep();
++    switch (D.Kind) {
++    case X86KNC::K_MEM:
++    case X86KNC::K_VSIB:
++    case X86KNC::K_M8:
++      printKNCMemReference(MI, D.MI, OS);
++      break;
++    case X86KNC::K_VR:
++      if (D.Flags & X86KNC::F_HALF) {
++        MCRegister Reg = MI->getOperand(D.MI).getReg();
++        printRegName(OS, MRI.getRegClass(X86::VR256XRegClassID)
++                             .getRegister(MRI.getEncodingValue(Reg)));
++        break;
++      }
++      [[fallthrough]];
++    default:
++      printOperand(MI, D.MI, OS);
++      break;
++    }
++    if ((D.Flags & X86KNC::F_CONV) && !Conv.empty())
++      OS << Conv;
++    if (D.Flags & X86KNC::F_CONV && RegEH)
++      OS << "{eh}";
++    if ((D.Flags & X86KNC::F_EH) && MemEH && D.Kind != X86KNC::K_VR)
++      OS << "{eh}";
++    if ((D.Flags & X86KNC::F_MASK) && I->MaskMI >= 0) {
++      MCRegister Mask = MI->getOperand(I->MaskMI).getReg();
++      if (Mask && Mask != X86::K0) {
++        OS << " {";
++        printRegName(OS, Mask);
++        OS << '}';
++      }
++    }
++  }
++  if (Intel && !Round.empty()) {
++    Sep();
++    OS << Round;
++  }
++  return true;
++}
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86InstPrinterCommon.h b/llvm/lib/Target/X86/MCTargetDesc/X86InstPrinterCommon.h
+index cb55f2f00..edda6f355 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86InstPrinterCommon.h
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86InstPrinterCommon.h
+@@ -40,6 +40,12 @@ protected:
+                       const MCSubtargetInfo &STI);
+   void printOptionalSegReg(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+   void printVKPair(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
++
++  /// Knights Corner forms print from the X86KNCInfo table (the generated
++  /// printer knows only their mnemonics); false for other opcodes.
++  bool printKNCInst(const MCInst *MI, raw_ostream &OS, bool Intel);
++  virtual void printKNCMemReference(const MCInst *MI, unsigned Op,
++                                    raw_ostream &OS) = 0;
+ };
+ 
+ } // end namespace llvm
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86IntelInstPrinter.cpp b/llvm/lib/Target/X86/MCTargetDesc/X86IntelInstPrinter.cpp
+index ff27005f5..dd88b32ba 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86IntelInstPrinter.cpp
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86IntelInstPrinter.cpp
+@@ -42,6 +42,12 @@ void X86IntelInstPrinter::printInst(const MCInst *MI, uint64_t Address,
+                                     raw_ostream &OS) {
+   printInstFlags(MI, OS, STI);
+ 
++  // Knights Corner forms (X86KNCInfo).
++  if (printKNCInst(MI, OS, /*Intel=*/true)) {
++    printAnnotation(OS, Annot);
++    return;
++  }
++
+   // In 16-bit mode, print data16 as data32.
+   if (MI->getOpcode() == X86::DATA16_PREFIX &&
+       STI.hasFeature(X86::Is16Bit)) {
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86IntelInstPrinter.h b/llvm/lib/Target/X86/MCTargetDesc/X86IntelInstPrinter.h
+index 324c56c13..e5f78f460 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86IntelInstPrinter.h
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86IntelInstPrinter.h
+@@ -44,6 +44,10 @@ public:
+ 
+   void printOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O) override;
+   void printMemReference(const MCInst *MI, unsigned Op, raw_ostream &O);
++  void printKNCMemReference(const MCInst *MI, unsigned Op,
++                            raw_ostream &O) override {
++    printMemReference(MI, Op, O);
++  }
+   void printMemOffset(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+   void printSrcIdx(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+   void printDstIdx(const MCInst *MI, unsigned OpNo, raw_ostream &O);

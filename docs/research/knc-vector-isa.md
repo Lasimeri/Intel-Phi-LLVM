@@ -79,6 +79,25 @@ shares the 62h prefix with EVEX and differs in P1 bit 2: 0 for MVEX
 (`host/crates/knc-mvex`, pinned to Intel's `mic_ni.h` bytes), 1 for EVEX.
 So MVEX is a flag bit on the EVEX form, not a fifth encoding.
 
+How S2 did it (2026-10-16, patches 0013 to 0015;
+[results](../results/2026-10-16-s2-mc-layer.md)):
+
+- **Flag and prefix:** the flag is TSFlags bit 55, `X86II::MVEX`, the
+  first free bit after `EVEX_U`. The code emitter has its own prefix kind
+  for it, because three EVEX fields mean other things there:
+  - P0 bit 3 is APX's B4 in EVEX and must be 0;
+  - P1 bit 2 is EVEX's U (APX X4) and must be 0;
+  - P2 is `E SSS V' aaa`.
+- **E and SSS are per-instance,** a trailing operand of each form. With a
+  register source and E=1, SSS is a rounding mode (`{rn}` 000 to
+  `{rz-sae}` 111), not EVEX's RC numbering.
+- **disp8*N depends on the conversion,** so it comes from a per-form
+  table indexed by SSS (tables 3.3 and 3.4), not from TSFlags.
+- **The registers are only MC-level.** VR512 and VK16 already exist and
+  are used by the MC layer as they are. They are not legal ISel types
+  under `knc`; making them legal would let much of X86ISelLowering emit
+  EVEX. That is S3 and S6.
+
 ### 3. Intel's assembler builds and agrees with its own tests
 
 ```
@@ -139,6 +158,12 @@ and the vectorizer, comes last and is optional.
 The following are estimates, not measurements:
 
 - S2 covers 344 mnemonics, each with up to several operand forms.
+  Measured in S2: the source of `k1omni.s` uses 211 distinct mnemonics,
+  the oracle's disassembly prints 211, and the manual's opcode tables
+  give 193 plus 26 compare pseudo-ops. These became 330 defs (217 opcode
+  rows) and patches of 1,584 + 588 + 308 lines. The 344 is the number of
+  distinct mnemonics on the L1OM and K1OM lines of MPSS binutils'
+  `i386-opc.tbl`, which also holds L1OM-only forms.
 - For comparison, `X86InstrAVX512.td` is the bulk of the 17,668 lines
   counted across `X86InstrAVX512.td` and the X86 TableGen backends.
 - S1 to S3 are a small backend inside the X86 one. S6 is the open-ended

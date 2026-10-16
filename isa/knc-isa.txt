@@ -1,0 +1,804 @@
+B|3505
+I|3506|VEX.NDS.128.0F.W0 85 id|jknzd k1, rel32
+I|3507|VEX.NDS.128.W0 75 ib|jknzd k1, rel8
+B|3621
+I|3622|VEX.NDS.128.0F.W0 84 id|jkzd k1, rel32
+I|3623|VEX.NDS.128.W0 74 ib|jkzd k1, rel8
+B|3737
+I|3738|VEX.128.0F.W0 41 /r|kand k1, k2
+B|3803
+I|3804|VEX.128.0F.W0 42 /r|kandn k1, k2
+B|3869
+I|3870|VEX.128.0F.W0 43 /r|kandnr k1, k2
+B|3935
+I|3936|VEX.NDS.128.0F.W0 95 /r|kconcath r64, k1, k2
+B|4001
+I|4002|VEX.NDS.128.0F.W0 97 /r|kconcatl r64, k1, k2
+B|4067
+I|4068|VEX.128.66.0F3A.W0 3E /r ib|kextract k1, r64, imm8
+B|4133
+I|4134|VEX.128.0F.W0 48 /r|kmerge2l1h k1, k2
+B|4198
+I|4199|VEX.128.0F.W0 49 /r|kmerge2l1l k1, k2
+B|4261
+I|4262|VEX.128.0F.W0 90 /r|kmov k1, k2
+I|4263|VEX.128.0F.W0 93 /r|kmov r32, k2
+I|4264|VEX.128.0F.W0 92 /r|kmov k1, r32
+B|4338
+I|4339|VEX.128.0F.W0 44 /r|knot k1, k2
+B|4405
+I|4406|VEX.128.0F.W0 45 /r|kor k1, k2
+B|4472
+I|4473|VEX.128.0F.W0 98 /r|kortest k1, k2
+B|4549
+I|4550|VEX.128.0F.W0 46 /r|kxnor k1, k2
+B|4619
+I|4620|VEX.128.0F.W0 47 /r|kxor k1, k2
+B|4694
+I|4695|MVEX.NDS.512.66.0F38.W1 50 /r|vaddnpd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|4774|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|4794|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|4804|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|4851
+I|4852|MVEX.NDS.512.66.0F38.W0 50 /r|vaddnps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|4931|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|4950|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|4960|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|5007
+I|5008|MVEX.NDS.512.66.0F.W1 58 /r|vaddpd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|5078|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|5099|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|5109|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|5156
+I|5157|MVEX.NDS.512.0F.W0 58 /r|vaddps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|5227|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|5247|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|5257|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|5304
+I|5305|MVEX.NDS.512.66.0F38.W0 CC /r|vaddsetsps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|5384|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|5403|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|5413|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|5474
+I|5475|MVEX.NDS.512.66.0F3A.W0 03 /r ib|valignd zmm1 {k1}, zmm2, zmm3/mt, offset
+B|5571
+I|5572|MVEX.NDS.512.66.0F38.W1 65 /r|vblendmpd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|5632|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|5648|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|5707
+I|5708|MVEX.NDS.512.66.0F38.W0 65 /r|vblendmps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|5767|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|5781|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|5838
+I|5839|MVEX.512.66.0F38.W0 1A /r|vbroadcastf32x4 zmm1 {k1}, Uf32(mt)
+T|5874|up|Uf32|000:-:16 001:reserved:- 010:reserved:- 011:{float16}:8 100:{uint8}:4 101:{sint8}:4 110:{uint16}:8 111:{sint16}:8
+B|5935
+I|5936|MVEX.512.66.0F38.W1 1B /r|vbroadcastf64x4 zmm1 {k1}, Uf64(mt)
+T|5970|up|Uf64|000:-:32 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|6031
+I|6032|MVEX.512.66.0F38.W0 5A /r|vbroadcasti32x4 zmm1 {k1}, Ui32(mt)
+T|6067|up|Ui32|000:-:16 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:4 101:{sint8}:4 110:{uint16}:8 111:{sint16}:8
+B|6128
+I|6129|MVEX.512.66.0F38.W1 5B /r|vbroadcasti64x4 zmm1 {k1}, Ui64(mt)
+T|6163|up|Ui64|000:-:32 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|6224
+I|6225|MVEX.512.66.0F38.W1 19 /r|vbroadcastsd zmm1 {k1}, Uf64(mt)
+T|6259|up|Uf64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|6320
+I|6321|MVEX.512.66.0F38.W0 18 /r|vbroadcastss zmm1 {k1}, Uf32(mt)
+T|6355|up|Uf32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|6416
+I|6417|MVEX.NDS.512.66.0F.W1 C2 /r ib|vcmppd k2 {k1}, zmm1, Sf64(zmm2/mt), imm8
+C|6475|eq|0
+C|6476|lt|1
+C|6477|le|2
+C|6478|unord|3
+C|6479|neq|4
+C|6480|nlt|5
+C|6481|nle|6
+C|6482|ord|7
+P|6529|vcmpeqpd|vcmppd|eq
+P|6530|vcmpltpd|vcmppd|lt
+P|6531|vcmplepd|vcmppd|le
+P|6532|vcmpunordpd|vcmppd|unord
+P|6533|vcmpneqpd|vcmppd|neq
+P|6534|vcmpnltpd|vcmppd|nlt
+P|6535|vcmpnlepd|vcmppd|nle
+P|6536|vcmpordpd|vcmppd|ord
+T|6557|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|6577|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|6587|reg1|Sf64|1xx:{sae}:-
+B|6654
+I|6655|MVEX.NDS.512.0F.W0 C2 /r ib|vcmpps k2 {k1}, zmm1, Sf32(zmm2/mt), imm8
+C|6709|eq|0
+C|6710|lt|1
+C|6711|le|2
+C|6712|unord|3
+C|6713|neq|4
+C|6714|nlt|5
+C|6715|nle|6
+C|6716|ord|7
+P|6762|vcmpeqps|vcmpps|eq
+P|6763|vcmpltps|vcmpps|lt
+P|6764|vcmpleps|vcmpps|le
+P|6765|vcmpunordps|vcmpps|unord
+P|6766|vcmpneqps|vcmpps|neq
+P|6767|vcmpnltps|vcmpps|nlt
+P|6768|vcmpnleps|vcmpps|nle
+P|6769|vcmpordps|vcmpps|ord
+T|6790|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|6809|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|6819|reg1|Sf32|1xx:{sae}:-
+B|6886
+I|6887|MVEX.512.F3.0F.W0 E6 /r|vcvtdq2pd zmm1 {k1}, Si32(zmm2/mt)
+T|6947|up|Si32|000:{8to8}:32 001:{1to8}:4 010:{4to8}:16 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|6963|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|7029
+I|7030|MVEX.512.0F3A.W0 CB /r ib|vcvtfxpntdq2ps zmm1 {k1}, Si32(zmm2/mt), imm8
+T|7108|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|7128|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|7138|reg1|Si32|1xx:{sae}:-
+B|7191
+I|7192|MVEX.512.F2.0F3A.W1 E6 /r ib|vcvtfxpntpd2dq zmm1 {k1}, Sf64(zmm2/mt), imm8
+T|7282|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|7299|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|7309|reg1|Sf64|1xx:{sae}:-
+B|7362
+I|7363|MVEX.512.F2.0F3A.W1 CA /r ib|vcvtfxpntpd2udq zmm1 {k1}, Sf64(zmm2/mt), imm8
+T|7450|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|7467|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|7477|reg1|Sf64|1xx:{sae}:-
+B|7529
+I|7530|MVEX.512.66.0F3A.W0 CB /r ib|vcvtfxpntps2dq zmm1 {k1}, Sf32(zmm2/mt), imm8
+T|7634|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|7648|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|7658|reg1|Sf32|1xx:{sae}:-
+B|7713
+I|7714|MVEX.512.66.0F3A.W0 CA /r ib|vcvtfxpntps2udq zmm1 {k1}, Sf32(zmm2/mt), imm8
+T|7814|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|7828|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|7838|reg1|Sf32|1xx:{sae}:-
+B|7893
+I|7894|MVEX.512.0F3A.W0 CA /r ib|vcvtfxpntudq2ps zmm1 {k1}, Si32(zmm2/mt), imm8
+T|7971|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|7991|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|8001|reg1|Si32|1xx:{sae}:-
+B|8047
+I|8048|MVEX.512.66.0F.W1 5A /r|vcvtpd2ps zmm1 {k1}, Sf64(zmm2/mt)
+T|8122|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|8143|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|8153|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|8211
+I|8212|MVEX.512.0F.W0 5A /r|vcvtps2pd zmm1 {k1}, Sf32(zmm2/mt)
+T|8272|up|Sf32|000:{8to8}:32 001:{1to8}:4 010:{4to8}:16 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|8288|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|8298|reg1|Sf32|1xx:{sae}:-
+B|8357
+I|8358|MVEX.512.F3.0F.W0 7A /r|vcvtudq2pd zmm1 {k1}, Si32(zmm2/mt)
+T|8418|up|Si32|000:{8to8}:32 001:{1to8}:4 010:{4to8}:16 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|8434|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|8500
+I|8501|MVEX.512.66.0F38.W0 C8 /r|vexp223ps zmm1 {k1}, zmm2/mt
+T|8588|reg0|-|000:{dcba}:- 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|8598|reg1|-|1xx:{sae}:-
+B|8650
+I|8651|MVEX.NDS.512.66.0F38.W1 55 /r|vfixupnanpd zmm1 {k1}, zmm2, Si64(zmm3/mt)
+T|8776|up|Si64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|8792|reg0|Si64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|8802|reg1|Si64|1xx:{sae}:-
+B|8853
+I|8854|MVEX.NDS.512.66.0F38.W0 55 /r|vfixupnanps zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|8979|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|8995|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|9005|reg1|Si32|1xx:{sae}:-
+B|9056
+I|9057|MVEX.NDS.512.66.0F38.W1 98 /r|vfmadd132pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|9122|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|9143|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|9153|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|9214
+I|9215|MVEX.NDS.512.66.0F38.W0 98 /r|vfmadd132ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|9277|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|9291|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|9301|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|9360
+I|9361|MVEX.NDS.512.66.0F38.W1 A8 /r|vfmadd213pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|9432|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|9453|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|9463|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|9524
+I|9525|MVEX.NDS.512.66.0F38.W0 A8 /r|vfmadd213ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|9596|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|9616|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|9626|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|9686
+I|9687|MVEX.NDS.512.66.0F38.W1 B8 /r|vfmadd231pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|9757|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|9778|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|9788|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|9849
+I|9850|MVEX.NDS.512.66.0F38.W0 B8 /r|vfmadd231ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|9920|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|9940|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|9950|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|10010
+I|10011|MVEX.NDS.512.66.0F38.W0 A4 /r|vfmadd233ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|10116|up|Sf32|000:{16to16}:64 001:reserved:- 010:{4to16}:16 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|10132|reg0|Sf32|000:{dcba}:- 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|10142|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|10207
+I|10208|MVEX.NDS.512.66.0F38.W1 9A /r|vfmsub132pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|10274|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|10295|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|10305|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|10366
+I|10367|MVEX.NDS.512.66.0F38.W0 9A /r|vfmsub132ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|10430|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|10444|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|10454|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|10513
+I|10514|MVEX.NDS.512.66.0F38.W1 AA /r|vfmsub213pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|10580|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|10601|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|10611|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|10672
+I|10673|MVEX.NDS.512.66.0F38.W0 AA /r|vfmsub213ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|10736|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|10750|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|10760|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|10819
+I|10820|MVEX.NDS.512.66.0F38.W1 BA /r|vfmsub231pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|10886|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|10907|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|10917|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|10978
+I|10979|MVEX.NDS.512.66.0F38.W0 BA /r|vfmsub231ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|11042|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|11056|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|11066|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|11125
+I|11126|MVEX.NDS.512.66.0F38.W1 9C /r|vfnmadd132pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|11199|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|11220|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|11230|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|11291
+I|11292|MVEX.NDS.512.66.0F38.W0 9C /r|vfnmadd132ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|11365|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|11385|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|11395|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|11455
+I|11456|MVEX.NDS.512.66.0F38.W1 AC /r|vfnmadd213pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|11528|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|11549|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|11559|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|11620
+I|11621|MVEX.NDS.512.66.0F38.W0 AC /r|vfnmadd213ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|11693|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|11713|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|11723|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|11783
+I|11784|MVEX.NDS.512.66.0F38.W1 BC /r|vfnmadd231pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|11857|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|11878|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|11888|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|11949
+I|11950|MVEX.NDS.512.66.0F38.W0 BC /r|vfnmadd231ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|12023|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|12043|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|12053|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|12113
+I|12114|MVEX.NDS.512.66.0F38.W1 9E /r|vfnmsub132pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|12200|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|12217|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|12227|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|12288
+I|12289|MVEX.NDS.512.66.0F38.W0 9E /r|vfnmsub132ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|12375|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|12391|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|12401|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|12461
+I|12462|MVEX.NDS.512.66.0F38.W1 AE /r|vfnmsub213pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|12548|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|12565|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|12575|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|12636
+I|12637|MVEX.NDS.512.66.0F38.W0 AE /r|vfnmsub213ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|12723|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|12739|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|12749|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|12809
+I|12810|MVEX.NDS.512.66.0F38.W1 BE /r|vfnmsub231pd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|12896|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|12913|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|12923|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|12984
+I|12985|MVEX.NDS.512.66.0F38.W0 BE /r|vfnmsub231ps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|13071|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|13087|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|13097|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|13156
+I|13157|MVEX.512.66.0F38.W1 92 /r /vsib|vgatherdpd zmm1 {k1}, Uf64(mvt)
+T|13225|up|Uf64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|13291
+I|13292|MVEX.512.66.0F38.W0 92 /r /vsib|vgatherdps zmm1 {k1}, Uf32(mvt)
+T|13358|up|Uf32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|13429
+I|13430|MVEX.512.66.0F38.W0 C6 /1 /vsib|vgatherpf0dps Uf32(mvt) {k1}
+T|13501|up|Uf32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|13564
+I|13565|MVEX.512.66.0F38.W1 C6 /0 /vsib|vgatherpf0hintdpd Uf64(mvt) {k1}
+T|13614|up|Uf64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|13666
+I|13667|MVEX.512.66.0F38.W0 C6 /0 /vsib|vgatherpf0hintdps Uf32(mvt) {k1}
+T|13715|up|Uf32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|13767
+I|13768|MVEX.512.66.0F38.W0 C6 /2 /vsib|vgatherpf1dps Uf32(mvt) {k1}
+T|13839|up|Uf32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|13901
+I|13902|MVEX.512.66.0F38.W1 42 /r|vgetexppd zmm1 {k1}, Sf64(zmm2/mt)
+T|13973|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|13989|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|13999|reg1|Sf64|1xx:{sae}:-
+B|14049
+I|14050|MVEX.512.66.0F38.W0 42 /r|vgetexpps zmm1 {k1}, Sf32(zmm2/mt)
+T|14122|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|14137|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|14147|reg1|Sf32|1xx:{sae}:-
+B|14198
+I|14199|MVEX.512.66.0F3A.W1 26 /r ib|vgetmantpd zmm1 {k1}, Sf64(zmm2/mt), imm8
+T|14372|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|14388|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|14398|reg1|Sf64|1xx:{sae}:-
+B|14455
+I|14456|MVEX.512.66.0F3A.W0 26 /r ib|vgetmantps zmm1 {k1}, Sf32(zmm2/mt), imm8
+T|14612|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|14626|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|14636|reg1|Sf32|1xx:{sae}:-
+B|14690
+I|14691|MVEX.NDS.512.66.0F38.W0 51 /r|vgmaxabsps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|14782|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|14798|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|14808|reg1|Sf32|1xx:{sae}:-
+B|14860
+I|14861|MVEX.NDS.512.66.0F38.W1 53 /r|vgmaxpd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|14968|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|14983|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|14993|reg1|Sf64|1xx:{sae}:-
+B|15047
+I|15048|MVEX.NDS.512.66.0F38.W0 53 /r|vgmaxps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|15155|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|15170|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|15180|reg1|Sf32|1xx:{sae}:-
+B|15233
+I|15234|MVEX.NDS.512.66.0F38.W1 52 /r|vgminpd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|15341|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|15356|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|15366|reg1|Sf64|1xx:{sae}:-
+B|15420
+I|15421|MVEX.NDS.512.66.0F38.W0 52 /r|vgminps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|15528|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|15543|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|15553|reg1|Sf32|1xx:{sae}:-
+B|15607
+I|15608|MVEX.512.0F38.W0 D4 /r|vloadunpackhd zmm1 {k1}, Ui32(mt)
+T|15697|up|Ui32|000:{16to16}:4 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|15761
+I|15762|MVEX.512.0F38.W1 D5 /r|vloadunpackhpd zmm1 {k1}, Uf64(mt)
+T|15852|up|Uf64|000:{8to8}:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|15916
+I|15917|MVEX.512.0F38.W0 D5 /r|vloadunpackhps zmm1 {k1}, Uf32(mt)
+T|16006|up|Uf32|000:{16to16}:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|16069
+I|16070|MVEX.512.0F38.W1 D4 /r|vloadunpackhq zmm1 {k1}, Ui64(mt)
+T|16158|up|Ui64|000:{8to8}:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|16225
+I|16226|MVEX.512.0F38.W0 D0 /r|vloadunpackld zmm1 {k1}, Ui32(mt)
+T|16305|up|Ui32|000:{16to16}:4 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|16367
+I|16368|MVEX.512.0F38.W1 D1 /r|vloadunpacklpd zmm1 {k1}, Uf64(mt)
+T|16449|up|Uf64|000:{8to8}:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|16512
+I|16513|MVEX.512.0F38.W0 D1 /r|vloadunpacklps zmm1 {k1}, Uf32(mt)
+T|16593|up|Uf32|000:{16to16}:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|16656
+I|16657|MVEX.512.0F38.W1 D0 /r|vloadunpacklq zmm1 {k1}, Ui64(mt)
+T|16738|up|Ui64|000:{8to8}:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|16801
+I|16802|MVEX.512.66.0F38.W0 C9 /r|vlog2ps zmm1 {k1}, zmm2/mt
+T|16887|reg0|-|000:{dcba}:- 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|16897|reg1|-|1xx:{sae}:-
+B|16950
+I|16951|MVEX.512.66.0F.W1 28 /r|vmovapd zmm1 {k1}, Uf64(mt)
+I|16953|MVEX.512.66.0F.W1 28 /r|vmovapd zmm1 {k1}, Sf64(zmm2)
+I|16955|MVEX.512.66.0F.W1 29 /r|vmovapd mt {k1}, Df64(zmm1)
+T|17019|up|Uf64|000:{8to8}:64 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|17035|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|17052|down|Df64|000:-:64 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|17107
+I|17108|MVEX.512.0F.W0 28 /r|vmovaps zmm1 {k1}, Uf32(mt)
+I|17110|MVEX.512.0F.W0 28 /r|vmovaps zmm1 {k1}, Sf32(zmm2)
+I|17112|MVEX.512.0F.W0 29 /r|vmovaps mt {k1}, Df32(zmm1)
+T|17181|up|Uf32|000:{16to16}:64 001:reserved:- 010:reserved:- 011:{float16}:32 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|17197|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|17211|down|Df32|000:-:64 001:reserved:- 010:reserved:- 011:{float16}:32 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+B|17266
+I|17267|MVEX.512.66.0F.W0 6F /r|vmovdqa32 zmm1 {k1}, Ui32(mt)
+I|17269|MVEX.512.66.0F.W0 6F /r|vmovdqa32 zmm1 {k1}, Si32(zmm2)
+I|17271|MVEX.512.66.0F.W0 7F /r|vmovdqa32 mt {k1}, Di32(zmm1)
+T|17340|up|Ui32|000:{16to16}:64 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|17356|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|17370|down|Di32|000:-:64 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+B|17425
+I|17426|MVEX.512.66.0F.W1 6F /r|vmovdqa64 zmm1 {k1}, Ui64(mt)
+I|17428|MVEX.512.66.0F.W1 6F /r|vmovdqa64 zmm1 {k1}, Si64(zmm2)
+I|17430|MVEX.512.66.0F.W1 7F /r|vmovdqa64 mt {k1}, Di64(zmm1)
+T|17495|up|Ui64|000:{8to8}:64 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|17511|reg0|Si64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|17528|down|Di64|000:-:64 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|17583
+I|17584|MVEX.512.F3.0F.W1.EH0 29 /r|vmovnrapd m {k1}, Df64(zmm1)
+T|17640|down|Df64|000:-:64 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|17694
+I|17695|MVEX.512.F2.0F.W0.EH0 29 /r|vmovnraps m {k1}, Df32(zmm1)
+T|17756|down|Df32|000:-:64 001:reserved:- 010:reserved:- 011:{float16}:32 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+B|17815
+I|17816|MVEX.512.F3.0F.W1.EH1 29 /r|vmovnrngoapd m {k1}, Df64(zmm1)
+T|17885|down|Df64|000:-:64 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|17945
+I|17946|MVEX.512.F2.0F.W0.EH1 29 /r|vmovnrngoaps m {k1}, Df32(zmm1)
+T|18021|down|Df32|000:-:64 001:reserved:- 010:reserved:- 011:{float16}:32 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+B|18081
+I|18082|MVEX.NDS.512.66.0F.W1 59 /r|vmulpd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|18143|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|18159|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|18169|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|18230
+I|18231|MVEX.NDS.512.0F.W0 59 /r|vmulps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|18292|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|18307|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|18317|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|18378
+I|18379|MVEX.512.66.0F38.W0 D4 /r|vpackstorehd mt {k1}, Di32(zmm1)
+T|18468|down|Di32|000:-:4 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|18534
+I|18535|MVEX.512.66.0F38.W1 D5 /r|vpackstorehpd mt {k1}, Df64(zmm1)
+T|18621|down|Df64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|18686
+I|18687|MVEX.512.66.0F38.W0 D5 /r|vpackstorehps mt {k1}, Df32(zmm1)
+T|18776|down|Df32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|18841
+I|18842|MVEX.512.66.0F38.W1 D4 /r|vpackstorehq mt {k1}, Di64(zmm1)
+T|18928|down|Di64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|18994
+I|18995|MVEX.512.66.0F38.W0 D0 /r|vpackstoreld mt {k1}, Di32(zmm1)
+T|19080|down|Di32|000:-:4 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|19146
+I|19147|MVEX.512.66.0F38.W1 D1 /r|vpackstorelpd mt {k1}, Df64(zmm1)
+T|19227|down|Df64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|19292
+I|19293|MVEX.512.66.0F38.W0 D1 /r|vpackstorelps mt {k1}, Df32(zmm1)
+T|19376|down|Df32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|19437
+I|19438|MVEX.512.66.0F38.W1 D0 /r|vpackstorelq mt {k1}, Di64(zmm1)
+T|19519|down|Di64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|19582
+I|19583|MVEX.NDS.512.66.0F38.W0 5C /r|vpadcd zmm1 {k1}, k2, Si32(zmm3/mt)
+T|19634|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|19650|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|19712
+I|19713|MVEX.NDS.512.66.0F.W0 FE /r|vpaddd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|19761|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|19776|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|19836
+I|19837|MVEX.NDS.512.66.0F38.W0 5D /r|vpaddsetcd zmm1 {k1}, k2, Si32(zmm3/mt)
+T|19888|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|19904|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|19966
+I|19967|MVEX.NDS.512.66.0F38.W0 CD /r|vpaddsetsd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|20021|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|20037|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|20098
+I|20099|MVEX.NDS.512.66.0F.W0 DB /r|vpandd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|20146|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|20162|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|20222
+I|20223|MVEX.NDS.512.66.0F.W0 DF /r|vpandnd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|20270|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|20286|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|20346
+I|20347|MVEX.NDS.512.66.0F.W1 DF /r|vpandnq zmm1 {k1}, zmm2, Si64(zmm3/mt)
+T|20394|up|Si64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|20409|reg0|Si64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|20469
+I|20470|MVEX.NDS.512.66.0F.W1 DB /r|vpandq zmm1 {k1}, zmm2, Si64(zmm3/mt)
+T|20517|up|Si64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|20532|reg0|Si64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|20592
+I|20593|MVEX.NDS.512.66.0F38.W0 64 /r|vpblendmd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|20641|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|20656|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|20713
+I|20714|MVEX.NDS.512.66.0F38.W1 64 /r|vpblendmq zmm1 {k1}, zmm2, Si64(zmm3/mt)
+T|20762|up|Si64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|20777|reg0|Si64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|20834
+I|20835|MVEX.512.66.0F38.W0 58 /r|vpbroadcastd zmm1 {k1}, Ui32(mt)
+T|20869|up|Ui32|000:-:4 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|20929
+I|20930|MVEX.512.66.0F38.W1 59 /r|vpbroadcastq zmm1 {k1}, Ui64(mt)
+T|20964|up|Ui64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|21025
+I|21026|MVEX.NDS.512.66.0F3A.W0 1F /r ib|vpcmpd k2 {k1}, zmm1, Si32(zmm2/mt), imm8
+C|21054|eq|0
+C|21055|lt|1
+C|21056|le|2
+C|21057|neq|4
+C|21058|nlt|5
+C|21059|nle|6
+P|21102|vpcmpeqd|vcmpd|eq
+P|21103|vpcmpltd|vcmpd|lt
+P|21104|vpcmpled|vcmpd|le
+P|21105|vpcmpneqd|vcmpd|neq
+P|21106|vpcmpnltd|vcmpd|nlt
+P|21107|vpcmpnled|vcmpd|nle
+T|21122|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|21138|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|21199
+I|21200|MVEX.NDS.512.66.0F.W0 76 /r|vpcmpeqd k2 {k1}, zmm1, Si32(zmm2/mt)
+T|21254|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|21269|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|21329
+I|21330|MVEX.NDS.512.66.0F.W0 66 /r|vpcmpgtd k2 {k1}, zmm1, Si32(zmm2/mt)
+T|21383|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|21398|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|21458
+I|21459|MVEX.NDS.512.66.0F38.W0 74 /r|vpcmpltd k2 {k1}, zmm1, Si32(zmm2/mt)
+T|21513|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|21528|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|21589
+I|21590|MVEX.NDS.512.66.0F3A.W0 1E /r ib|vpcmpud k2 {k1}, zmm1, Si32(zmm2/mt), imm8
+C|21619|eq|0
+C|21620|lt|1
+C|21621|le|2
+C|21622|neq|4
+C|21623|nlt|5
+C|21624|nle|6
+P|21667|vpcmpequd|vcmpud|eq
+P|21668|vpcmpltud|vcmpud|lt
+P|21669|vpcmpleud|vcmpud|le
+P|21670|vpcmpnequd|vcmpud|neq
+P|21671|vpcmpnltud|vcmpud|nlt
+P|21672|vpcmpnleud|vcmpud|nle
+T|21687|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|21703|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|21764
+I|21765|MVEX.NDS.512.66.0F38.W0 36 /r|vpermd zmm1 {k1}, zmm2, zmm3/mt
+B|21854
+I|21855|MVEX.512.66.0F3A.W0 07 /r ib|vpermf32x4 zmm1 {k1}, zmm2/mt, imm8
+B|21959
+I|21960|MVEX.512.66.0F38.W0 90 /r /vsib|vpgatherdd zmm1 {k1}, Ui32(mvt)
+T|22026|up|Ui32|000:-:4 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|22098
+I|22099|MVEX.512.66.0F38.W1 90 /r /vsib|vpgatherdq zmm1 {k1}, Ui64(mvt)
+T|22167|up|Ui64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|22240
+I|22241|MVEX.NDS.512.66.0F38.W0 B5 /r|vpmadd231d zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|22293|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|22309|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|22371
+I|22372|MVEX.NDS.512.66.0F38.W0 B4 /r|vpmadd233d zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|22458|up|Si32|000:{16to16}:64 001:reserved:- 010:{4to16}:16 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|22478|reg0|Si32|000:{dcba}:- 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|22542
+I|22543|MVEX.NDS.512.66.0F38.W0 3D /r|vpmaxsd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|22592|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|22607|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|22667
+I|22668|MVEX.NDS.512.66.0F38.W0 3F /r|vpmaxud zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|22717|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|22732|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|22792
+I|22793|MVEX.NDS.512.66.0F38.W0 39 /r|vpminsd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|22842|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|22857|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|22917
+I|22918|MVEX.NDS.512.66.0F38.W0 3B /r|vpminud zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|22967|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|22982|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|23042
+I|23043|MVEX.NDS.512.66.0F38.W0 87 /r|vpmulhd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|23091|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|23106|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|23166
+I|23167|MVEX.NDS.512.66.0F38.W0 86 /r|vpmulhud zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|23215|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|23230|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|23290
+I|23291|MVEX.NDS.512.66.0F38.W0 40 /r|vpmulld zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|23339|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|23354|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|23414
+I|23415|MVEX.NDS.512.66.0F.W0 EB /r|vpord zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|23462|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|23478|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|23538
+I|23539|MVEX.NDS.512.66.0F.W1 EB /r|vporq zmm1 {k1}, zmm2, Si64(zmm3/mt)
+T|23586|up|Si64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|23602|reg0|Si64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|23662
+I|23663|MVEX.NDS.512.66.0F38.W0 5E /r|vpsbbd zmm1 {k1}, k2, Si32(zmm3/mt)
+T|23716|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|23732|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|23794
+I|23795|MVEX.NDS.512.66.0F38.W0 6E /r|vpsbbrd zmm1 {k1}, k2, Si32(zmm3/mt)
+T|23846|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|23862|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|23924
+I|23925|MVEX.512.66.0F38.W0 A0 /r /vsib|vpscatterdd mvt {k1}, Di32(zmm1)
+T|23999|down|Di32|000:-:4 001:reserved:- 010:reserved:- 011:reserved:- 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|24063
+I|24064|MVEX.512.66.0F38.W1 A0 /r /vsib|vpscatterdq mvt {k1}, Di64(zmm1)
+T|24136|down|Di64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|24202
+I|24203|MVEX.512.66.0F.W0 70 /r ib|vpshufd zmm1 {k1}, zmm2/mt, imm8
+B|24302
+I|24303|MVEX.NDD.512.66.0F.W0 72 /6 ib|vpslld zmm1 {k1}, Si32(zmm2/mt), imm8
+T|24353|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|24368|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|24428
+I|24429|MVEX.NDS.512.66.0F38.W0 47 /r|vpsllvd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|24479|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|24494|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|24554
+I|24555|MVEX.NDD.512.66.0F.W0 72 /4 ib|vpsrad zmm1 {k1}, Si32(zmm2/mt), imm8
+T|24606|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|24621|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|24681
+I|24682|MVEX.NDS.512.66.0F38.W0 46 /r|vpsravd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|24733|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|24748|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|24808
+I|24809|MVEX.NDD.512.66.0F.W0 72 /2 ib|vpsrld zmm1 {k1}, Si32(zmm2/mt), imm8
+T|24860|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|24875|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|24935
+I|24936|MVEX.NDS.512.66.0F38.W0 45 /r|vpsrlvd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|24987|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|25002|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|25062
+I|25063|MVEX.NDS.512.66.0F.W0 FA /r|vpsubd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|25111|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|25126|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|25186
+I|25187|MVEX.NDS.512.66.0F38.W0 6C /r|vpsubrd zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|25235|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|25250|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|25310
+I|25311|MVEX.NDS.512.66.0F38.W0 6F /r|vpsubrsetbd zmm1 {k1}, k2, Si32(zmm3/mt)
+T|25362|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|25378|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|25440
+I|25441|MVEX.NDS.512.66.0F38.W0 5F /r|vpsubsetbd zmm1 {k1}, k2, Si32(zmm3/mt)
+T|25492|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|25508|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|25570
+I|25571|MVEX.NDS.512.66.0F38.W0 27 /r|vptestmd k2 {k1}, zmm1, Si32(zmm2/mt)
+T|25626|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|25641|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|25701
+I|25702|MVEX.NDS.512.66.0F.W0 EF /r|vpxord zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|25750|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|25765|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|25825
+I|25826|MVEX.NDS.512.66.0F.W1 EF /r|vpxorq zmm1 {k1}, zmm2, Si64(zmm3/mt)
+T|25873|up|Si64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|25888|reg0|Si64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+B|25948
+I|25949|MVEX.512.66.0F38.W0 CA /r|vrcp23ps zmm1 {k1}, zmm2/mt
+T|26025|reg0|-|000:{dcba}:- 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|26035|reg1|-|1xx:{sae}:-
+B|26090
+I|26091|MVEX.512.66.0F3A.W1 52 /r ib|vrndfxpntpd zmm1 {k1}, Sf64(zmm2/mt), imm8
+T|26199|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|26215|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|26225|reg1|Sf64|1xx:{sae}:-
+B|26279
+I|26280|MVEX.512.66.0F3A.W0 52 /r ib|vrndfxpntps zmm1 {k1}, Sf32(zmm2/mt), imm8
+T|26384|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|26398|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|26408|reg1|Sf32|1xx:{sae}:-
+B|26461
+I|26462|MVEX.512.66.0F38.W0 CB /r|vrsqrt23ps zmm1 {k1}, zmm2/mt
+T|26548|reg0|-|000:{dcba}:- 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|26558|reg1|-|1xx:{sae}:-
+B|26611
+I|26612|MVEX.NDS.512.66.0F38.W0 84 /r|vscaleps zmm1 {k1}, zmm2, Si32(zmm3/mt)
+T|26681|up|Si32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:reserved:- 100:{uint8}:16 101:{sint8}:16 110:{uint16}:32 111:{sint16}:32
+T|26702|reg0|Si32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|26712|reg1|Si32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|26771
+I|26772|MVEX.512.66.0F38.W1 A2 /r /vsib|vscatterdpd mvt {k1}, Df64(zmm1)
+T|26845|down|Df64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|26915
+I|26916|MVEX.512.66.0F38.W0 A2 /r /vsib|vscatterdps mvt {k1}, Df32(zmm1)
+T|26990|down|Df32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|27061
+I|27062|MVEX.512.66.0F38.W0 C6 /5 /vsib|vscatterpf0dps Uf32(mvt) {k1}
+T|27133|up|Uf32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|27195
+I|27196|MVEX.512.66.0F38.W1 C6 /4 /vsib|vscatterpf0hintdpd Uf64(mvt) {k1}
+T|27245|up|Uf64|000:-:8 001:reserved:- 010:reserved:- 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+B|27297
+I|27298|MVEX.512.66.0F38.W0 C6 /4 /vsib|vscatterpf0hintdps Uf32(mvt) {k1}
+T|27346|up|Uf32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|27398
+I|27399|MVEX.512.66.0F38.W0 C6 /6 /vsib|vscatterpf1dps Uf32(mvt) {k1}
+T|27470|down|Df32|000:-:4 001:reserved:- 010:reserved:- 011:{float16}:2 100:{uint8}:1 101:{sint8}:1 110:{uint16}:2 111:{sint16}:2
+B|27531
+I|27532|MVEX.NDS.512.66.0F.W1 5C /r|vsubpd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|27593|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|27609|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|27619|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|27679
+I|27680|MVEX.NDS.512.0F.W0 5C /r|vsubps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|27741|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|27756|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|27766|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|27827
+I|27828|MVEX.NDS.512.66.0F38.W1 6D /r|vsubrpd zmm1 {k1}, zmm2, Sf64(zmm3/mt)
+T|27889|up|Sf64|000:{8to8}:64 001:{1to8}:8 010:{4to8}:32 011:reserved:- 100:reserved:- 101:reserved:- 110:reserved:- 111:reserved:-
+T|27905|reg0|Sf64|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|27915|reg1|Sf64|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|27976
+I|27977|MVEX.NDS.512.66.0F38.W0 6D /r|vsubrps zmm1 {k1}, zmm2, Sf32(zmm3/mt)
+T|28038|up|Sf32|000:{16to16}:64 001:{1to16}:4 010:{4to16}:16 011:{float16}:32 100:{uint8}:16 110:{uint16}:32 111:{sint16}:32
+T|28053|reg0|Sf32|000:{dcba}:- 001:{cdab}:- 010:{badc}:- 011:{dacb}:- 100:{aaaa}:- 101:{bbbb}:- 110:{cccc}:- 111:{dddd}:-
+T|28063|reg1|Sf32|000:{rn}:- 001:{rd}:- 010:{ru}:- 011:{rz}:- 100:{rn-sae}:- 101:{rd-sae}:- 110:{ru-sae}:- 111:{rz-sae}:-
+B|28137
+I|28138|VEX.128.F2.0F AE /7|clevict0 m8
+I|28139|MVEX.512.F2.0F AE /7|clevict0 m8
+B|28214
+I|28215|VEX.128.F3.0F AE /7|clevict1 m8
+I|28216|MVEX.512.F3.0F AE /7|clevict1 m8
+B|28291
+I|28292|VEX.128.F3.0F.W0 AE /6|delay r32
+I|28293|VEX.128.F3.0F.W1 AE /6|delay r64
+B|28385
+I|28386|VEX.128.F3.0F.W0 BD /r|lzcnt r32, r32
+I|28388|VEX.128.F3.0F.W1 BD /r|lzcnt r64, r64
+B|28479
+I|28480|VEX.128.F3.0F.W0 B8 /r|popcnt r32, r32
+I|28482|VEX.128.F3.0F.W1 B8 /r|popcnt r64, r64
+B|28546
+I|28547|VEX.128.F2.0F.W0 AE /6|spflt r32
+I|28548|VEX.128.F2.0F.W1 AE /6|spflt r64
+B|28666
+I|28667|VEX.128.F3.0F.W0 BC /r|tzcnt r32, r32
+I|28669|VEX.128.F3.0F.W1 BC /r|tzcnt r64, r64
+B|28754
+I|28755|VEX.128.F2.0F.W0 BC /r|tzcnti r32, r32
+I|28757|VEX.128.F2.0F.W1 BC /r|tzcnti r64, r64
+B|28853
+I|28854|VEX.128.0F 18 /1|vprefetch0 m8
+I|28855|MVEX.512.0F 18 /1|vprefetch0 m8
+B|28955
+I|28956|VEX.128.0F 18 /2|vprefetch1 m8
+I|28957|MVEX.512.0F 18 /2|vprefetch1 m8
+B|29057
+I|29058|VEX.128.0F 18 /3|vprefetch2 m8
+I|29059|MVEX.512.0F 18 /3|vprefetch2 m8
+B|29159
+I|29160|VEX.128.0F 18 /5|vprefetche0 m8
+I|29161|MVEX.512.0F 18 /5|vprefetche0 m8
+B|29260
+I|29261|VEX.128.0F 18 /6|vprefetche1 m8
+I|29262|MVEX.512.0F 18 /6|vprefetche1 m8
+B|29361
+I|29362|VEX.128.0F 18 /7|vprefetche2 m8
+I|29363|MVEX.512.0F 18 /7|vprefetche2 m8
+B|29464
+I|29465|VEX.128.0F 18 /4|vprefetchenta m8
+I|29466|MVEX.512.0F 18 /4|vprefetchenta m8
+B|29564
+I|29565|VEX.128.0F 18 /0|vprefetchnta m8
+I|29566|MVEX.512.0F 18 /0|vprefetchnta m8

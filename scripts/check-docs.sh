@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 fail=0
 
 # The directories (or files) that hold code, in this repository.
-code_dirs=(scripts oracle)
+code_dirs=(scripts oracle tools tests)
 
 # Rule 1: sibling docs. A code directory that does not exist is an error,
 # so a stale entry cannot pass silently.

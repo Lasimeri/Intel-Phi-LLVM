@@ -1,0 +1,308 @@
+diff --git a/llvm/lib/Target/X86/Disassembler/X86Disassembler.cpp b/llvm/lib/Target/X86/Disassembler/X86Disassembler.cpp
+index 1d83ee40b..1480d0670 100644
+--- a/llvm/lib/Target/X86/Disassembler/X86Disassembler.cpp
++++ b/llvm/lib/Target/X86/Disassembler/X86Disassembler.cpp
+@@ -74,6 +74,7 @@
+ //===----------------------------------------------------------------------===//
+ 
+ #include "MCTargetDesc/X86BaseInfo.h"
++#include "MCTargetDesc/X86KNCInfo.h"
+ #include "MCTargetDesc/X86MCTargetDesc.h"
+ #include "TargetInfo/X86TargetInfo.h"
+ #include "X86DisassemblerDecoder.h"
+@@ -83,6 +84,7 @@
+ #include "llvm/MC/MCExpr.h"
+ #include "llvm/MC/MCInst.h"
+ #include "llvm/MC/MCInstrInfo.h"
++#include "llvm/MC/MCRegisterInfo.h"
+ #include "llvm/MC/MCSubtargetInfo.h"
+ #include "llvm/MC/TargetRegistry.h"
+ #include "llvm/Support/Compiler.h"
+@@ -1813,11 +1815,287 @@ X86GenericDisassembler::X86GenericDisassembler(
+   llvm_unreachable("Invalid CPU mode");
+ }
+ 
++
++namespace {
++/// The Knights Corner decoder: MVEX (62h with P1 bit 2 clear) and the KNC
++/// VEX forms, driven by the X86KNCInfo table the assembler and the printers
++/// use. Returns false when the bytes are not a Knights Corner instruction,
++/// so the generic decoder takes them; true with Status set otherwise.
++bool decodeKNC(MCInst &Instr, uint64_t &Size, ArrayRef<uint8_t> Bytes,
++               const MCRegisterInfo &MRI,
++               MCDisassembler::DecodeStatus &Status) {
++  static const MCPhysReg GR64[16] = {X86::RAX, X86::RCX, X86::RDX, X86::RBX,
++                                     X86::RSP, X86::RBP, X86::RSI, X86::RDI,
++                                     X86::R8,  X86::R9,  X86::R10, X86::R11,
++                                     X86::R12, X86::R13, X86::R14, X86::R15};
++  static const MCPhysReg GR32[16] = {X86::EAX,  X86::ECX,  X86::EDX,  X86::EBX,
++                                     X86::ESP,  X86::EBP,  X86::ESI,  X86::EDI,
++                                     X86::R8D,  X86::R9D,  X86::R10D, X86::R11D,
++                                     X86::R12D, X86::R13D, X86::R14D, X86::R15D};
++  auto ZMM = [&](unsigned N) {
++    return MRI.getRegClass(X86::VR512RegClassID).getRegister(N);
++  };
++  auto KReg = [&](unsigned N) {
++    return MRI.getRegClass(X86::VK16RegClassID).getRegister(N);
++  };
++
++  size_t P = 0, N = Bytes.size();
++  bool AdSize = false;
++  MCRegister Seg;
++  for (; P < N; ++P) {
++    uint8_t B = Bytes[P];
++    if (B == 0x67)
++      AdSize = true;
++    else if (B == 0x2e)
++      Seg = X86::CS;
++    else if (B == 0x36)
++      Seg = X86::SS;
++    else if (B == 0x3e)
++      Seg = X86::DS;
++    else if (B == 0x26)
++      Seg = X86::ES;
++    else if (B == 0x64)
++      Seg = X86::FS;
++    else if (B == 0x65)
++      Seg = X86::GS;
++    else
++      break;
++  }
++  if (P >= N)
++    return false;
++
++  bool IsMVEX = false;
++  unsigned R = 0, X = 0, B = 0, R2 = 0, V2 = 0, Map, W = 0, VVVV, PP, L = 0;
++  unsigned E = 0, SSS = 0, AAA = 0;
++  switch (Bytes[P]) {
++  case 0x62: {
++    if (P + 4 > N)
++      return false;
++    uint8_t P0 = Bytes[P + 1], P1 = Bytes[P + 2], P2 = Bytes[P + 3];
++    if ((P1 & 0x04) || (P0 & 0x0c) || !(P0 & 3))
++      return false; // EVEX, or not an MVEX opcode map
++    IsMVEX = true;
++    R = !(P0 >> 7 & 1);
++    X = !(P0 >> 6 & 1);
++    B = !(P0 >> 5 & 1);
++    R2 = !(P0 >> 4 & 1);
++    Map = P0 & 3;
++    W = P1 >> 7;
++    VVVV = (~P1 >> 3) & 15;
++    PP = P1 & 3;
++    E = P2 >> 7;
++    SSS = P2 >> 4 & 7;
++    V2 = !(P2 >> 3 & 1);
++    AAA = P2 & 7;
++    P += 4;
++    break;
++  }
++  case 0xc5:
++    if (P + 2 > N)
++      return false;
++    R = !(Bytes[P + 1] >> 7);
++    Map = 1;
++    VVVV = (~Bytes[P + 1] >> 3) & 15;
++    L = Bytes[P + 1] >> 2 & 1;
++    PP = Bytes[P + 1] & 3;
++    P += 2;
++    break;
++  case 0xc4:
++    if (P + 3 > N)
++      return false;
++    R = !(Bytes[P + 1] >> 7);
++    X = !(Bytes[P + 1] >> 6 & 1);
++    B = !(Bytes[P + 1] >> 5 & 1);
++    Map = Bytes[P + 1] & 31;
++    W = Bytes[P + 2] >> 7;
++    VVVV = (~Bytes[P + 2] >> 3) & 15;
++    L = Bytes[P + 2] >> 2 & 1;
++    PP = Bytes[P + 2] & 3;
++    P += 3;
++    break;
++  default:
++    return false;
++  }
++  if (P + 2 > N)
++    return false;
++  uint8_t Opc = Bytes[P], ModRM = Bytes[P + 1];
++  unsigned Mod = ModRM >> 6, Reg = ModRM >> 3 & 7, RM = ModRM & 7;
++
++  const X86KNC::Insn *I = nullptr;
++  for (const X86KNC::Insn &C : X86KNC::getAllInsns()) {
++    if (C.MVEX != IsMVEX || C.Map != Map || C.PP != PP || C.Opc != Opc ||
++        (C.W != 2 && C.W != W) || (C.ModRM != 8 && C.ModRM != Reg) ||
++        C.isMemForm() != (Mod != 3) || (C.EH != 2 && C.EH != E) || L)
++      continue;
++    I = &C;
++    break;
++  }
++  if (!I)
++    return false;
++  P += 2;
++
++  // Only the decorations the table lists are valid.
++  Status = MCDisassembler::Fail;
++  Size = P;
++  if (I->SSSMI >= 0) {
++    if (I->isMemForm()) {
++      if (!(X86KNC::getDecoTable(I->MemTab).Valid >> SSS & 1))
++        return true;
++    } else if (!E || !I->Reg1Tab ||
++               X86KNC::getDecoTable(I->Reg1Tab).Valid != 0xff) {
++      // a swizzle, also next to {sae} or {eh} (SAE only: SSS 100 is plain)
++      bool PlainSAE = E && I->Reg1Tab && SSS == 4;
++      if (!PlainSAE && !(X86KNC::getDecoTable(I->Reg0Tab).Valid >> SSS & 1))
++        return true;
++    }
++  } else if (IsMVEX && (SSS || (I->EH == 2 && E))) {
++    return true;
++  }
++
++  // The memory operand.
++  MCRegister Base, Index;
++  unsigned Scale = 1;
++  int64_t Disp = 0;
++  if (Mod != 3) {
++    bool VSIB = false;
++    for (unsigned J = 0; J != I->NumOps; ++J)
++      if (I->Ops[J].Role == X86KNC::R_RM)
++        VSIB = I->Ops[J].Kind == X86KNC::K_VSIB;
++    const MCPhysReg *GR = AdSize ? GR32 : GR64;
++    bool Disp32 = Mod == 2;
++    if (RM == 4) {
++      if (P >= N)
++        return true;
++      uint8_t SIB = Bytes[P++];
++      Scale = 1 << (SIB >> 6);
++      unsigned Idx = (SIB >> 3 & 7) | X << 3;
++      bool NoBase = (SIB & 7) == 5 && Mod == 0;
++      if (NoBase)
++        Disp32 = true;
++      else
++        Base = GR[(SIB & 7) | B << 3];
++      // Index 100 is "none", but a SIB byte that the base does not need
++      // (not RSP/R12, not absolute) or a scale other than 1 keeps it as
++      // %riz/%eiz, so the bytes assemble back the same.
++      if (VSIB)
++        Index = ZMM(Idx | V2 << 4);
++      else if (Idx != 4)
++        Index = GR[Idx];
++      else if (Scale != 1 || (!NoBase && (SIB & 7) != 4))
++        Index = AdSize ? X86::EIZ : X86::RIZ;
++    } else if (RM == 5 && Mod == 0) {
++      Base = AdSize ? X86::EIP : X86::RIP;
++      Disp32 = true;
++    } else {
++      Base = GR[RM | B << 3];
++    }
++    if (VSIB && !Index)
++      return true;
++    if (Mod == 1) {
++      if (P >= N)
++        return true;
++      unsigned Scale8 = 1;
++      if (IsMVEX && I->MemTab)
++        Scale8 = X86KNC::getDecoTable(I->MemTab).N[SSS];
++      Disp = int8_t(Bytes[P++]) * int64_t(Scale8 ? Scale8 : 1);
++    } else if (Disp32) {
++      if (P + 4 > N)
++        return true;
++      Disp = int32_t(Bytes[P] | Bytes[P + 1] << 8 | Bytes[P + 2] << 16 |
++                     uint32_t(Bytes[P + 3]) << 24);
++      P += 4;
++    }
++  }
++
++  // Registers by role.
++  auto RegFor = [&](const X86KNC::OperandDesc &D) -> MCRegister {
++    unsigned Num;
++    switch (D.Role) {
++    case X86KNC::R_REG:
++      Num = Reg | R << 3 | (D.Kind == X86KNC::K_VR ? R2 << 4 : 0);
++      break;
++    case X86KNC::R_VVVV:
++      Num = VVVV | (D.Kind == X86KNC::K_VR ? V2 << 4 : 0);
++      break;
++    default:
++      Num = RM | B << 3 | (D.Kind == X86KNC::K_VR ? X << 4 : 0);
++      break;
++    }
++    switch (D.Kind) {
++    case X86KNC::K_VR:
++      return ZMM(Num);
++    case X86KNC::K_KR:
++      return Num < 8 ? KReg(Num) : MCRegister();
++    case X86KNC::K_GR32:
++      return GR32[Num & 15];
++    default:
++      return GR64[Num & 15];
++    }
++  };
++
++  Instr.clear();
++  Instr.setOpcode(I->Opcode);
++  for (unsigned Pos = 0;;) {
++    if (int(Pos) == I->MaskMI) {
++      Instr.addOperand(MCOperand::createReg(KReg(AAA)));
++      ++Pos;
++      continue;
++    }
++    if (int(Pos) == I->SSSMI) {
++      Instr.addOperand(MCOperand::createImm(E << 3 | SSS));
++      ++Pos;
++      continue;
++    }
++    unsigned J = 0;
++    while (J != I->NumOps && I->Ops[J].MI != Pos)
++      ++J;
++    if (J == I->NumOps)
++      break;
++    const X86KNC::OperandDesc &D = I->Ops[J];
++    if (D.Kind == X86KNC::K_MEM || D.Kind == X86KNC::K_VSIB ||
++        D.Kind == X86KNC::K_M8) {
++      Instr.addOperand(MCOperand::createReg(Base));
++      Instr.addOperand(MCOperand::createImm(Scale));
++      Instr.addOperand(MCOperand::createReg(Index));
++      Instr.addOperand(MCOperand::createImm(Disp));
++      Instr.addOperand(MCOperand::createReg(Seg));
++      Pos += 5;
++      continue;
++    }
++    if (D.Kind == X86KNC::K_IMM) {
++      if (P >= N)
++        return true;
++      Instr.addOperand(MCOperand::createImm(Bytes[P++]));
++    } else {
++      MCRegister Op = RegFor(D);
++      if (!Op)
++        return true;
++      Instr.addOperand(MCOperand::createReg(Op));
++    }
++    ++Pos;
++  }
++  if (P > 15)
++    return true;
++  Size = P;
++  if (AdSize)
++    Instr.setFlags(X86::IP_HAS_AD_SIZE);
++  Status = MCDisassembler::Success;
++  return true;
++}
++} // namespace
++
+ MCDisassembler::DecodeStatus X86GenericDisassembler::getInstruction(
+     MCInst &Instr, uint64_t &Size, ArrayRef<uint8_t> Bytes, uint64_t Address,
+     raw_ostream &CStream) const {
+   CommentStream = &CStream;
+ 
++  // Knights Corner: MVEX and the KNC VEX forms, when the subtarget has them.
++  if (STI.hasFeature(X86::FeatureKNC)) {
++    DecodeStatus Status;
++    if (decodeKNC(Instr, Size, Bytes, *getContext().getRegisterInfo(), Status))
++      return Status;
++  }
++
+   InternalInstruction Insn;
+   memset(&Insn, 0, sizeof(InternalInstruction));
+   Insn.bytes = Bytes;

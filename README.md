@@ -1,7 +1,7 @@
 # Intel-Phi-LLVM
 
 LLVM and Clang for the Xeon Phi 3120A (Knights Corner), the whole core.
-The scalar knc64-x87 subset works on LLVM 23.1.1, the version Arch ships (S0), and `-march=knc` selects it with hardening defaults in `config/knc.cfg` (S1). This repository adds the
+The scalar knc64-x87 subset works on LLVM 23.1.1, the version Arch ships (S0), and `-march=knc` selects it with hardening defaults in `config/knc.cfg` (S1). Under `knc`, LLVM assembles, encodes, prints and disassembles the MVEX vector ISA byte for byte as Intel's K1OM assembler does (S2). This repository adds the
 512-bit MVEX vector unit, as a `knc` feature and CPU (`-mcpu=knc`,
 `-march=knc`) beside the scalar restrictions.
 
@@ -23,6 +23,8 @@ the card stack:
 | `scripts/check-distro.sh` | Reports when Arch's LLVM moves past the pinned tag (decision D1) |
 | `config/knc.cfg` | `clang --config` defaults: `-march=knc` and the hardening verified on a card |
 | `scripts/march-check.sh`, `hardening-check.sh` | The S1 gate: `-march=knc` byte-identical to `knc-cc`, hardening defaults on a card |
+| `isa/`, `tools/knc-gen.c` | The KNC instruction table extracted from Intel's manual 327364 (`scripts/isa-extract.sh`) and its generator for patch 0013 (`scripts/check-knc-gen.sh`) |
+| `oracle/k1omni-check.sh`, `knc-mvex-check.sh`, `scripts/mc-regress.sh`, `mvex-card-check.sh`, `tests/` | The S2 gate: Intel's K1OM test byte for byte with round trips, the knc-mvex vectors, other x86 encodings unchanged, a self-checking MVEX probe on a card |
 | `oracle/` | Intel's MPSS binutils 2.22, built from checksummed sources and run as the MVEX encoding oracle (GPL, never copied) |
 | `docs/plan.md` | Stages S0 to S6 and their gates |
 | `docs/research/` | Prior art, measurements, constraints |
@@ -36,7 +38,7 @@ and the build root is `~/.cache/intel-phi-llvm-build`.
 ```
 make check                                  # docs rules, shell syntax, SERIES consistency
 scripts/build.sh all                        # host clang for the card
-oracle/build-binutils.sh && oracle/k1omni-check.sh
+oracle/build-binutils.sh && LLVM_MC=~/.cache/intel-phi-llvm-build/llvm/bin/llvm-mc oracle/k1omni-check.sh
 ```
 
 Licences: [LICENSE.md](LICENSE.md).

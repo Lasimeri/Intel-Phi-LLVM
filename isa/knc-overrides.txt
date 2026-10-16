@@ -1,0 +1,12 @@
+# knc-overrides.txt: where the K1OM assembler Intel shipped (MPSS 3.8.6 gas,
+# the oracle) and the reference manual (327364-001) disagree, the oracle
+# decides the bytes. One override a line: kind, arguments, then the evidence.
+#
+# rounding MNEMONIC: the register form takes the full static rounding set
+# ({rn} {rd} {ru} {rz} and their -sae forms), not only {sae}.
+rounding vcvtfxpntdq2ps     # k1omni.s 2756-2764: {rn}..{rz-sae} -> MVEX.E=1, SSS=000..111
+rounding vcvtfxpntudq2ps    # k1omni.s 2784-2792: the same
+#
+# pseudo NAME BASE IMM|-: NAME assembles as BASE (with IMM appended, or as
+# BASE itself with "-").
+pseudo vpcmpnled vpcmpgtd - # k1omni.s 2137: gas emits 66.0F.W0 66 (vpcmpgtd); 327364 lists vpcmpd {nle}

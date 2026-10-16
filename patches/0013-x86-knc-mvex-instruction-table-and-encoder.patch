@@ -1,0 +1,1584 @@
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/CMakeLists.txt b/llvm/lib/Target/X86/MCTargetDesc/CMakeLists.txt
+index 94d11cb15..915270155 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/CMakeLists.txt
++++ b/llvm/lib/Target/X86/MCTargetDesc/CMakeLists.txt
+@@ -9,6 +9,7 @@ add_llvm_component_library(LLVMX86Desc
+   X86MCTargetDesc.cpp
+   X86MCAsmInfo.cpp
+   X86MCCodeEmitter.cpp
++  X86KNCInfo.cpp
+   X86MCLFIRewriter.cpp
+   X86MachObjectWriter.cpp
+   X86MnemonicTables.cpp
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86BaseInfo.h b/llvm/lib/Target/X86/MCTargetDesc/X86BaseInfo.h
+index 06b13c098..4b0d2fc4c 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86BaseInfo.h
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86BaseInfo.h
+@@ -875,7 +875,11 @@ enum : uint64_t {
+   TwoConditionalOps = 1ULL << TwoConditionalOps_Shift,
+   // EVEX_U - Set if this instruction has EVEX.U field set.
+   EVEX_UShift = TwoConditionalOps_Shift + 1,
+-  EVEX_U = 1ULL << EVEX_UShift
++  EVEX_U = 1ULL << EVEX_UShift,
++  // MVEX - Set for the Knights Corner MVEX forms: EVEX-shaped 62h prefixes
++  // with P0 bit 3 and P1 bit 2 clear, and MVEX.E/SSS in place of z/L'L/b.
++  MVEXShift = EVEX_UShift + 1,
++  MVEX = 1ULL << MVEXShift
+ };
+ 
+ /// \returns true if the instruction with given opcode is a prefix.
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.cpp b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.cpp
+new file mode 100644
+index 000000000..75688a661
+--- /dev/null
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.cpp
+@@ -0,0 +1,108 @@
++//===-- X86KNCInfo.cpp - Knights Corner instruction table -----------------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#include "X86KNCInfo.h"
++#include "X86MCTargetDesc.h"
++#include "llvm/MC/MCInst.h"
++#include <algorithm>
++#include <vector>
++
++using namespace llvm;
++using namespace llvm::X86KNC;
++
++namespace {
++#include "X86KNCInfo.inc"
++} // namespace
++
++ArrayRef<Insn> X86KNC::getAllInsns() { return ArrayRef(Insns); }
++
++ArrayRef<Insn> X86KNC::lookupMnemonic(StringRef Mnemonic) {
++  auto Range = std::equal_range(
++      std::begin(Insns), std::end(Insns), Mnemonic,
++      [](const auto &A, const auto &B) {
++        auto Name = [](const auto &X) -> StringRef {
++          if constexpr (std::is_same_v<std::decay_t<decltype(X)>, Insn>)
++            return X.Mnemonic;
++          else
++            return X;
++        };
++        return Name(A) < Name(B);
++      });
++  return ArrayRef<Insn>(Range.first, Range.second);
++}
++
++const Insn *X86KNC::lookupOpcode(unsigned Opcode) {
++  // Built once: the table is sorted by mnemonic, the opcode index by opcode.
++  static const std::vector<uint16_t> ByOpcode = [] {
++    std::vector<uint16_t> V(std::size(Insns));
++    for (unsigned I = 0; I != V.size(); ++I)
++      V[I] = I;
++    std::sort(V.begin(), V.end(), [](uint16_t A, uint16_t B) {
++      return Insns[A].Opcode < Insns[B].Opcode;
++    });
++    return V;
++  }();
++  auto It = std::lower_bound(
++      ByOpcode.begin(), ByOpcode.end(), Opcode,
++      [](uint16_t I, unsigned Opc) { return Insns[I].Opcode < Opc; });
++  if (It == ByOpcode.end() || Insns[*It].Opcode != Opcode)
++    return nullptr;
++  return &Insns[*It];
++}
++
++const PseudoOp *X86KNC::lookupPseudo(StringRef Mnemonic) {
++  for (const PseudoOp &P : PseudoOps)
++    if (Mnemonic == P.Pseudo)
++      return &P;
++  return nullptr;
++}
++
++const PseudoOp *X86KNC::findPseudo(StringRef Base, unsigned Imm) {
++  for (const PseudoOp &P : PseudoOps)
++    if (Base == P.Base && Imm == P.Imm)
++      return &P;
++  return nullptr;
++}
++
++const DecoTable &X86KNC::getDecoTable(unsigned Index) {
++  return DecoTables[Index];
++}
++
++int X86KNC::findDeco(const DecoTable &T, StringRef Tok) {
++  if (Tok.empty())
++    return (T.Valid & 1) ? 0 : -1;
++  if ((T.Valid & 1) && Tok == T.Alias)
++    return 0;
++  for (int S = 0; S != 8; ++S)
++    if ((T.Valid >> S & 1) && Tok == T.Tok[S])
++      return S;
++  return -1;
++}
++
++bool X86KNC::hasSSSOperand(unsigned Opcode) {
++  const Insn *I = lookupOpcode(Opcode);
++  return I && I->SSSMI >= 0;
++}
++
++unsigned X86KNC::getMVEXBits(const MCInst &MI) {
++  const Insn *I = lookupOpcode(MI.getOpcode());
++  if (!I)
++    return 0;
++  unsigned Bits = I->SSSMI >= 0 ? MI.getOperand(I->SSSMI).getImm() & 15 : 0;
++  if (I->EH != 2)
++    Bits = (Bits & 7) | I->EH << 3;
++  return Bits;
++}
++
++unsigned X86KNC::getDisp8Scale(const MCInst &MI) {
++  const Insn *I = lookupOpcode(MI.getOpcode());
++  if (!I || !I->MVEX || !I->MemTab)
++    return 0;
++  unsigned N = DecoTables[I->MemTab].N[getMVEXBits(MI) & 7];
++  return N ? N : 1;
++}
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.h b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.h
+new file mode 100644
+index 000000000..604fe6793
+--- /dev/null
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.h
+@@ -0,0 +1,129 @@
++//===-- X86KNCInfo.h - Knights Corner instruction table ---------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++// The Knights Corner (Xeon Phi x100, K1OM) vector instructions: the MVEX
++// prefix (62h with P1 bit 2 clear) and the KNC VEX mask and scalar forms.
++// One table, generated from Intel's instruction set reference (327364-001),
++// describes every form: its operands in Intel order, the encoding field each
++// operand goes to, its MCInst position, and the swizzle, conversion and
++// rounding decorations it accepts with the disp8*N of each memory
++// conversion. The assembler, the instruction printers, the code emitter and
++// the disassembler all read it, so the syntax and the encoding cannot drift
++// apart.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef LLVM_LIB_TARGET_X86_MCTARGETDESC_X86KNCINFO_H
++#define LLVM_LIB_TARGET_X86_MCTARGETDESC_X86KNCINFO_H
++
++#include "llvm/ADT/ArrayRef.h"
++#include "llvm/ADT/StringRef.h"
++#include <cstdint>
++
++namespace llvm {
++class MCInst;
++
++namespace X86KNC {
++
++/// Operand kinds.
++enum OperandKind : uint8_t {
++  K_VR,   ///< zmm0-zmm31
++  K_KR,   ///< k0-k7
++  K_GR32, ///< 32-bit general register
++  K_GR64, ///< 64-bit general register
++  K_MEM,  ///< memory (five MCInst operands)
++  K_VSIB, ///< memory with a zmm index (gather, scatter)
++  K_IMM,  ///< imm8
++  K_M8,   ///< byte memory (prefetch, cache-line evict)
++};
++
++/// The encoding field an operand goes to.
++enum OperandRole : uint8_t { R_NONE, R_REG, R_VVVV, R_RM, R_IMM };
++
++/// Operand flags.
++enum : uint8_t {
++  F_MASK = 1, ///< carries the {k} write mask
++  F_CONV = 2, ///< carries the swizzle or conversion decoration
++  F_EH = 4,   ///< accepts the {eh} eviction hint
++  F_HALF = 8, ///< a register source read as its low half, written ymm
++};
++
++struct OperandDesc {
++  uint8_t Kind;
++  uint8_t Role;
++  uint8_t MI; ///< MCInst operand index (the first of five for memory)
++  uint8_t Flags;
++};
++
++/// One decoration table: the spelling of each MVEX.SSS value (empty for the
++/// default), the disp8*N of a memory conversion, the valid values, and the
++/// document's spelling of the default ({16to16}, {8to8}, {dcba}).
++struct DecoTable {
++  const char *Tok[8];
++  uint8_t N[8];
++  uint8_t Valid;
++  const char *Alias;
++};
++
++struct Insn {
++  unsigned Opcode;
++  const char *Mnemonic;
++  uint8_t MVEX;  ///< 1 MVEX, 0 VEX
++  uint8_t Map;   ///< 1 0F, 2 0F38, 3 0F3A
++  uint8_t PP;    ///< 0 none, 1 66, 2 F3, 3 F2
++  uint8_t W;     ///< 0, 1, or 2 when W is ignored
++  uint8_t Opc;   ///< opcode byte
++  uint8_t ModRM; ///< ModRM.reg opcode extension 0-7, or 8 for /r
++  uint8_t EH;    ///< MVEX.E fixed by the opcode (0, 1), or 2 when free
++  int8_t MaskMI; ///< MCInst index of the write mask, or -1
++  int8_t SSSMI;  ///< MCInst index of the E << 3 | SSS operand, or -1
++  uint8_t MemTab;  ///< decorations of the memory operand (up/down conv)
++  uint8_t Reg0Tab; ///< register swizzles (MVEX.E = 0)
++  uint8_t Reg1Tab; ///< rounding and SAE (MVEX.E = 1), 0 when not allowed
++  uint8_t Form;    ///< 0 SrcReg 1 SrcMem 2 DestMem 3 MRMnr 4 MRMnm
++  uint8_t NumOps;
++  OperandDesc Ops[5];
++
++  bool isMemForm() const { return Form == 1 || Form == 2 || Form == 4; }
++};
++
++/// A pseudo-op of the reference: vcmpeqps = vcmpps with immediate 0. Imm is
++/// 0xff for a pseudo-op that is another opcode outright (vpcmpnled).
++struct PseudoOp {
++  const char *Pseudo;
++  const char *Base;
++  uint8_t Imm;
++};
++
++/// The forms of a mnemonic, in matching order; empty when it is not a
++/// Knights Corner mnemonic.
++ArrayRef<Insn> lookupMnemonic(StringRef Mnemonic);
++/// The form of an opcode, or null when it is not a Knights Corner opcode.
++const Insn *lookupOpcode(unsigned Opcode);
++const PseudoOp *lookupPseudo(StringRef Mnemonic);
++/// The pseudo-op that prints a (base, immediate) pair, or null.
++const PseudoOp *findPseudo(StringRef Base, unsigned Imm);
++const DecoTable &getDecoTable(unsigned Index);
++ArrayRef<Insn> getAllInsns();
++
++/// MVEX.E << 3 | MVEX.SSS of an MCInst (the fixed E of vmovnr*/vmovnrngo*
++/// included).
++unsigned getMVEXBits(const MCInst &MI);
++/// The disp8*N scale of an MVEX memory form, from its conversion.
++unsigned getDisp8Scale(const MCInst &MI);
++/// True when the opcode carries a trailing E << 3 | SSS operand.
++bool hasSSSOperand(unsigned Opcode);
++
++/// Index of a decoration in a table (the alias of the default included);
++/// -1 when the table has no such decoration.
++int findDeco(const DecoTable &T, StringRef Tok);
++
++} // namespace X86KNC
++} // namespace llvm
++
++#endif
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.inc b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.inc
+new file mode 100644
+index 000000000..424a77cc1
+--- /dev/null
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.inc
+@@ -0,0 +1,393 @@
++// Generated by Intel-Phi-LLVM tools/knc-gen.c from isa/knc-isa.txt (Intel
++// 327364-001). Do not edit by hand. Included by X86KNCInfo.cpp.
++
++static const DecoTable DecoTables[] = {
++  {{"", "", "", "", "", "", "", ""}, {0, 0, 0, 0, 0, 0, 0, 0}, 0, ""},
++  {{"", "{cdab}", "{badc}", "{dacb}", "{aaaa}", "{bbbb}", "{cccc}", "{dddd}"}, {0, 0, 0, 0, 0, 0, 0, 0}, 0xff, "{dcba}"},
++  {{"{rn}", "{rd}", "{ru}", "{rz}", "{rn-sae}", "{rd-sae}", "{ru-sae}", "{rz-sae}"}, {0, 0, 0, 0, 0, 0, 0, 0}, 0xff, ""},
++  {{"", "{1to8}", "{4to8}", "", "", "", "", ""}, {64, 8, 32, 0, 0, 0, 0, 0}, 0x07, "{8to8}"},
++  {{"", "{1to16}", "{4to16}", "{float16}", "{uint8}", "", "{uint16}", "{sint16}"}, {64, 4, 16, 32, 16, 0, 32, 32}, 0xdf, "{16to16}"},
++  {{"", "", "", "", "", "", "", ""}, {0, 0, 0, 0, 0, 0, 0, 0}, 0x01, ""},
++  {{"", "", "", "", "", "", "", ""}, {64, 0, 0, 0, 0, 0, 0, 0}, 0x01, ""},
++  {{"", "", "", "{float16}", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {16, 0, 0, 8, 4, 4, 8, 8}, 0xf9, ""},
++  {{"", "", "", "", "", "", "", ""}, {32, 0, 0, 0, 0, 0, 0, 0}, 0x01, ""},
++  {{"", "", "", "", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {16, 0, 0, 0, 4, 4, 8, 8}, 0xf1, ""},
++  {{"", "", "", "", "", "", "", ""}, {8, 0, 0, 0, 0, 0, 0, 0}, 0x01, ""},
++  {{"", "", "", "{float16}", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {4, 0, 0, 2, 1, 1, 2, 2}, 0xf9, ""},
++  {{"", "", "", "", "{sae}", "{sae}", "{sae}", "{sae}"}, {0, 0, 0, 0, 0, 0, 0, 0}, 0xf0, ""},
++  {{"", "{1to8}", "{4to8}", "", "", "", "", ""}, {32, 4, 16, 0, 0, 0, 0, 0}, 0x07, "{8to8}"},
++  {{"", "{1to16}", "{4to16}", "", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {64, 4, 16, 0, 16, 16, 32, 32}, 0xf7, "{16to16}"},
++  {{"", "", "", "", "", "", "", ""}, {0, 0, 0, 0, 0, 0, 0, 0}, 0x01, "{dcba}"},
++  {{"", "", "{4to16}", "", "", "", "", ""}, {64, 0, 16, 0, 0, 0, 0, 0}, 0x05, "{16to16}"},
++  {{"", "", "", "", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {4, 0, 0, 0, 1, 1, 2, 2}, 0xf1, "{16to16}"},
++  {{"", "", "", "", "", "", "", ""}, {8, 0, 0, 0, 0, 0, 0, 0}, 0x01, "{8to8}"},
++  {{"", "", "", "{float16}", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {4, 0, 0, 2, 1, 1, 2, 2}, 0xf9, "{16to16}"},
++  {{"", "", "", "", "", "", "", ""}, {64, 0, 0, 0, 0, 0, 0, 0}, 0x01, "{8to8}"},
++  {{"", "", "", "{float16}", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {64, 0, 0, 32, 16, 16, 32, 32}, 0xf9, "{16to16}"},
++  {{"", "", "", "{float16}", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {64, 0, 0, 32, 16, 16, 32, 32}, 0xf9, ""},
++  {{"", "", "", "", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {64, 0, 0, 0, 16, 16, 32, 32}, 0xf1, "{16to16}"},
++  {{"", "", "", "", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {64, 0, 0, 0, 16, 16, 32, 32}, 0xf1, ""},
++  {{"", "", "", "", "{uint8}", "{sint8}", "{uint16}", "{sint16}"}, {4, 0, 0, 0, 1, 1, 2, 2}, 0xf1, ""},
++};
++
++static const Insn Insns[] = {
++  {X86::KNC_CLEVICT0_m, "clevict0", 0, 1, 3, 2, 0xAE, 7, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_CLEVICT0_m_MVEX, "clevict0", 1, 1, 3, 2, 0xAE, 7, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_CLEVICT1_m, "clevict1", 0, 1, 2, 2, 0xAE, 7, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_CLEVICT1_m_MVEX, "clevict1", 1, 1, 2, 2, 0xAE, 7, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_DELAY_r, "delay", 0, 1, 2, 0, 0xAE, 6, 2, -1, -1, 0, 0, 0, 3, 1, {{K_GR32, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_DELAY_q, "delay", 0, 1, 2, 1, 0xAE, 6, 2, -1, -1, 0, 0, 0, 3, 1, {{K_GR64, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KAND_kk, "kand", 0, 1, 0, 0, 0x41, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KANDN_kk, "kandn", 0, 1, 0, 0, 0x42, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KANDNR_kk, "kandnr", 0, 1, 0, 0, 0x43, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KCONCATH_qkk, "kconcath", 0, 1, 0, 0, 0x95, 8, 2, -1, -1, 0, 0, 0, 0, 3, {{K_GR64, R_REG, 0, 0}, {K_KR, R_VVVV, 1, 0}, {K_KR, R_RM, 2, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KCONCATL_qkk, "kconcatl", 0, 1, 0, 0, 0x97, 8, 2, -1, -1, 0, 0, 0, 0, 3, {{K_GR64, R_REG, 0, 0}, {K_KR, R_VVVV, 1, 0}, {K_KR, R_RM, 2, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KEXTRACT_kqi, "kextract", 0, 3, 1, 0, 0x3E, 8, 2, -1, -1, 0, 0, 0, 0, 3, {{K_KR, R_REG, 0, 0}, {K_GR64, R_RM, 1, 0}, {K_IMM, R_IMM, 2, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KMERGE2L1H_kk, "kmerge2l1h", 0, 1, 0, 0, 0x48, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KMERGE2L1L_kk, "kmerge2l1l", 0, 1, 0, 0, 0x49, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KMOV_kk, "kmov", 0, 1, 0, 0, 0x90, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KMOV_rk, "kmov", 0, 1, 0, 0, 0x93, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR32, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KMOV_kr, "kmov", 0, 1, 0, 0, 0x92, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_GR32, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KNOT_kk, "knot", 0, 1, 0, 0, 0x44, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KOR_kk, "kor", 0, 1, 0, 0, 0x45, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KORTEST_kk, "kortest", 0, 1, 0, 0, 0x98, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KXNOR_kk, "kxnor", 0, 1, 0, 0, 0x46, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_KXOR_kk, "kxor", 0, 1, 0, 0, 0x47, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_KR, R_REG, 0, 0}, {K_KR, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_LZCNT_rr, "lzcnt", 0, 1, 2, 0, 0xBD, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR32, R_REG, 0, 0}, {K_GR32, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_LZCNT_qq, "lzcnt", 0, 1, 2, 1, 0xBD, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR64, R_REG, 0, 0}, {K_GR64, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_POPCNT_rr, "popcnt", 0, 1, 2, 0, 0xB8, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR32, R_REG, 0, 0}, {K_GR32, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_POPCNT_qq, "popcnt", 0, 1, 2, 1, 0xB8, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR64, R_REG, 0, 0}, {K_GR64, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_SPFLT_r, "spflt", 0, 1, 3, 0, 0xAE, 6, 2, -1, -1, 0, 0, 0, 3, 1, {{K_GR32, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_SPFLT_q, "spflt", 0, 1, 3, 1, 0xAE, 6, 2, -1, -1, 0, 0, 0, 3, 1, {{K_GR64, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_TZCNT_rr, "tzcnt", 0, 1, 2, 0, 0xBC, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR32, R_REG, 0, 0}, {K_GR32, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_TZCNT_qq, "tzcnt", 0, 1, 2, 1, 0xBC, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR64, R_REG, 0, 0}, {K_GR64, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_TZCNTI_rr, "tzcnti", 0, 1, 3, 0, 0xBC, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR32, R_REG, 0, 0}, {K_GR32, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_TZCNTI_qq, "tzcnti", 0, 1, 3, 1, 0xBC, 8, 2, -1, -1, 0, 0, 0, 0, 2, {{K_GR64, R_REG, 0, 0}, {K_GR64, R_RM, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDNPD_zzz, "vaddnpd", 1, 2, 1, 1, 0x50, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDNPD_zzm, "vaddnpd", 1, 2, 1, 1, 0x50, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDNPS_zzz, "vaddnps", 1, 2, 1, 0, 0x50, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDNPS_zzm, "vaddnps", 1, 2, 1, 0, 0x50, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDPD_zzz, "vaddpd", 1, 1, 1, 1, 0x58, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDPD_zzm, "vaddpd", 1, 1, 1, 1, 0x58, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDPS_zzz, "vaddps", 1, 1, 0, 0, 0x58, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDPS_zzm, "vaddps", 1, 1, 0, 0, 0x58, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDSETSPS_zzz, "vaddsetsps", 1, 2, 1, 0, 0xCC, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDSETSPS_zzm, "vaddsetsps", 1, 2, 1, 0, 0xCC, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VALIGND_zzzi, "valignd", 1, 3, 1, 0, 0x03, 8, 2, 1, -1, 0, 5, 0, 0, 4, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 0}, {K_IMM, R_IMM, 4, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VALIGND_zzmi, "valignd", 1, 3, 1, 0, 0x03, 8, 2, 1, 9, 6, 0, 0, 1, 4, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 4}, {K_IMM, R_IMM, 8, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBLENDMPD_zzz, "vblendmpd", 1, 2, 1, 1, 0x65, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBLENDMPD_zzm, "vblendmpd", 1, 2, 1, 1, 0x65, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBLENDMPS_zzz, "vblendmps", 1, 2, 1, 0, 0x65, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBLENDMPS_zzm, "vblendmps", 1, 2, 1, 0, 0x65, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBROADCASTF32X4_zm, "vbroadcastf32x4", 1, 2, 1, 0, 0x1A, 8, 2, 1, 7, 7, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBROADCASTF64X4_zm, "vbroadcastf64x4", 1, 2, 1, 1, 0x1B, 8, 2, 1, 7, 8, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBROADCASTI32X4_zm, "vbroadcasti32x4", 1, 2, 1, 0, 0x5A, 8, 2, 1, 7, 9, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBROADCASTI64X4_zm, "vbroadcasti64x4", 1, 2, 1, 1, 0x5B, 8, 2, 1, 7, 8, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBROADCASTSD_zm, "vbroadcastsd", 1, 2, 1, 1, 0x19, 8, 2, 1, 7, 10, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VBROADCASTSS_zm, "vbroadcastss", 1, 2, 1, 0, 0x18, 8, 2, 1, 7, 11, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCMPPD_kzzi, "vcmppd", 1, 1, 1, 1, 0xC2, 8, 2, 1, 5, 0, 1, 12, 0, 4, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {K_IMM, R_IMM, 4, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCMPPD_kzmi, "vcmppd", 1, 1, 1, 1, 0xC2, 8, 2, 1, 9, 3, 0, 0, 1, 4, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {K_IMM, R_IMM, 8, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCMPPS_kzzi, "vcmpps", 1, 1, 0, 0, 0xC2, 8, 2, 1, 5, 0, 1, 12, 0, 4, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {K_IMM, R_IMM, 4, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCMPPS_kzmi, "vcmpps", 1, 1, 0, 0, 0xC2, 8, 2, 1, 9, 4, 0, 0, 1, 4, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {K_IMM, R_IMM, 8, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTDQ2PD_zz, "vcvtdq2pd", 1, 1, 2, 0, 0xE6, 8, 2, 1, 3, 0, 1, 0, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 10}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTDQ2PD_zm, "vcvtdq2pd", 1, 1, 2, 0, 0xE6, 8, 2, 1, 7, 13, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTDQ2PS_zzi, "vcvtfxpntdq2ps", 1, 3, 0, 0, 0xCB, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTDQ2PS_zmi, "vcvtfxpntdq2ps", 1, 3, 0, 0, 0xCB, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTPD2DQ_zzi, "vcvtfxpntpd2dq", 1, 3, 3, 1, 0xE6, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTPD2DQ_zmi, "vcvtfxpntpd2dq", 1, 3, 3, 1, 0xE6, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTPD2UDQ_zzi, "vcvtfxpntpd2udq", 1, 3, 3, 1, 0xCA, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTPD2UDQ_zmi, "vcvtfxpntpd2udq", 1, 3, 3, 1, 0xCA, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTPS2DQ_zzi, "vcvtfxpntps2dq", 1, 3, 1, 0, 0xCB, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTPS2DQ_zmi, "vcvtfxpntps2dq", 1, 3, 1, 0, 0xCB, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTPS2UDQ_zzi, "vcvtfxpntps2udq", 1, 3, 1, 0, 0xCA, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTPS2UDQ_zmi, "vcvtfxpntps2udq", 1, 3, 1, 0, 0xCA, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTUDQ2PS_zzi, "vcvtfxpntudq2ps", 1, 3, 0, 0, 0xCA, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTFXPNTUDQ2PS_zmi, "vcvtfxpntudq2ps", 1, 3, 0, 0, 0xCA, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTPD2PS_zz, "vcvtpd2ps", 1, 1, 1, 1, 0x5A, 8, 2, 1, 3, 0, 1, 2, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTPD2PS_zm, "vcvtpd2ps", 1, 1, 1, 1, 0x5A, 8, 2, 1, 7, 3, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTPS2PD_zz, "vcvtps2pd", 1, 1, 0, 0, 0x5A, 8, 2, 1, 3, 0, 1, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 10}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTPS2PD_zm, "vcvtps2pd", 1, 1, 0, 0, 0x5A, 8, 2, 1, 7, 13, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTUDQ2PD_zz, "vcvtudq2pd", 1, 1, 2, 0, 0x7A, 8, 2, 1, 3, 0, 1, 0, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 10}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTUDQ2PD_zm, "vcvtudq2pd", 1, 1, 2, 0, 0x7A, 8, 2, 1, 7, 13, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VEXP223PS_zz, "vexp223ps", 1, 2, 1, 0, 0xC8, 8, 2, 1, 3, 0, 15, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VEXP223PS_zm, "vexp223ps", 1, 2, 1, 0, 0xC8, 8, 2, 1, 7, 6, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFIXUPNANPD_zzz, "vfixupnanpd", 1, 2, 1, 1, 0x55, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFIXUPNANPD_zzm, "vfixupnanpd", 1, 2, 1, 1, 0x55, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFIXUPNANPS_zzz, "vfixupnanps", 1, 2, 1, 0, 0x55, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFIXUPNANPS_zzm, "vfixupnanps", 1, 2, 1, 0, 0x55, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD132PD_zzz, "vfmadd132pd", 1, 2, 1, 1, 0x98, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD132PD_zzm, "vfmadd132pd", 1, 2, 1, 1, 0x98, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD132PS_zzz, "vfmadd132ps", 1, 2, 1, 0, 0x98, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD132PS_zzm, "vfmadd132ps", 1, 2, 1, 0, 0x98, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD213PD_zzz, "vfmadd213pd", 1, 2, 1, 1, 0xA8, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD213PD_zzm, "vfmadd213pd", 1, 2, 1, 1, 0xA8, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD213PS_zzz, "vfmadd213ps", 1, 2, 1, 0, 0xA8, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD213PS_zzm, "vfmadd213ps", 1, 2, 1, 0, 0xA8, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD231PD_zzz, "vfmadd231pd", 1, 2, 1, 1, 0xB8, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD231PD_zzm, "vfmadd231pd", 1, 2, 1, 1, 0xB8, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD231PS_zzz, "vfmadd231ps", 1, 2, 1, 0, 0xB8, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD231PS_zzm, "vfmadd231ps", 1, 2, 1, 0, 0xB8, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD233PS_zzz, "vfmadd233ps", 1, 2, 1, 0, 0xA4, 8, 2, 1, 4, 0, 15, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMADD233PS_zzm, "vfmadd233ps", 1, 2, 1, 0, 0xA4, 8, 2, 1, 8, 16, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB132PD_zzz, "vfmsub132pd", 1, 2, 1, 1, 0x9A, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB132PD_zzm, "vfmsub132pd", 1, 2, 1, 1, 0x9A, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB132PS_zzz, "vfmsub132ps", 1, 2, 1, 0, 0x9A, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB132PS_zzm, "vfmsub132ps", 1, 2, 1, 0, 0x9A, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB213PD_zzz, "vfmsub213pd", 1, 2, 1, 1, 0xAA, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB213PD_zzm, "vfmsub213pd", 1, 2, 1, 1, 0xAA, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB213PS_zzz, "vfmsub213ps", 1, 2, 1, 0, 0xAA, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB213PS_zzm, "vfmsub213ps", 1, 2, 1, 0, 0xAA, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB231PD_zzz, "vfmsub231pd", 1, 2, 1, 1, 0xBA, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB231PD_zzm, "vfmsub231pd", 1, 2, 1, 1, 0xBA, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB231PS_zzz, "vfmsub231ps", 1, 2, 1, 0, 0xBA, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFMSUB231PS_zzm, "vfmsub231ps", 1, 2, 1, 0, 0xBA, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD132PD_zzz, "vfnmadd132pd", 1, 2, 1, 1, 0x9C, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD132PD_zzm, "vfnmadd132pd", 1, 2, 1, 1, 0x9C, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD132PS_zzz, "vfnmadd132ps", 1, 2, 1, 0, 0x9C, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD132PS_zzm, "vfnmadd132ps", 1, 2, 1, 0, 0x9C, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD213PD_zzz, "vfnmadd213pd", 1, 2, 1, 1, 0xAC, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD213PD_zzm, "vfnmadd213pd", 1, 2, 1, 1, 0xAC, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD213PS_zzz, "vfnmadd213ps", 1, 2, 1, 0, 0xAC, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD213PS_zzm, "vfnmadd213ps", 1, 2, 1, 0, 0xAC, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD231PD_zzz, "vfnmadd231pd", 1, 2, 1, 1, 0xBC, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD231PD_zzm, "vfnmadd231pd", 1, 2, 1, 1, 0xBC, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD231PS_zzz, "vfnmadd231ps", 1, 2, 1, 0, 0xBC, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMADD231PS_zzm, "vfnmadd231ps", 1, 2, 1, 0, 0xBC, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB132PD_zzz, "vfnmsub132pd", 1, 2, 1, 1, 0x9E, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB132PD_zzm, "vfnmsub132pd", 1, 2, 1, 1, 0x9E, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB132PS_zzz, "vfnmsub132ps", 1, 2, 1, 0, 0x9E, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB132PS_zzm, "vfnmsub132ps", 1, 2, 1, 0, 0x9E, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB213PD_zzz, "vfnmsub213pd", 1, 2, 1, 1, 0xAE, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB213PD_zzm, "vfnmsub213pd", 1, 2, 1, 1, 0xAE, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB213PS_zzz, "vfnmsub213ps", 1, 2, 1, 0, 0xAE, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB213PS_zzm, "vfnmsub213ps", 1, 2, 1, 0, 0xAE, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB231PD_zzz, "vfnmsub231pd", 1, 2, 1, 1, 0xBE, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB231PD_zzm, "vfnmsub231pd", 1, 2, 1, 1, 0xBE, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB231PS_zzz, "vfnmsub231ps", 1, 2, 1, 0, 0xBE, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VFNMSUB231PS_zzm, "vfnmsub231ps", 1, 2, 1, 0, 0xBE, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERDPD_zv, "vgatherdpd", 1, 2, 1, 1, 0x92, 8, 2, 1, 7, 10, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERDPS_zv, "vgatherdps", 1, 2, 1, 0, 0x92, 8, 2, 1, 7, 11, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERPF0DPS_v, "vgatherpf0dps", 1, 2, 1, 0, 0xC6, 1, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERPF0HINTDPD_v, "vgatherpf0hintdpd", 1, 2, 1, 1, 0xC6, 0, 2, 0, 6, 10, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERPF0HINTDPS_v, "vgatherpf0hintdps", 1, 2, 1, 0, 0xC6, 0, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERPF1DPS_v, "vgatherpf1dps", 1, 2, 1, 0, 0xC6, 2, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGETEXPPD_zz, "vgetexppd", 1, 2, 1, 1, 0x42, 8, 2, 1, 3, 0, 1, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGETEXPPD_zm, "vgetexppd", 1, 2, 1, 1, 0x42, 8, 2, 1, 7, 3, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGETEXPPS_zz, "vgetexpps", 1, 2, 1, 0, 0x42, 8, 2, 1, 3, 0, 1, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGETEXPPS_zm, "vgetexpps", 1, 2, 1, 0, 0x42, 8, 2, 1, 7, 4, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGETMANTPD_zzi, "vgetmantpd", 1, 3, 1, 1, 0x26, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGETMANTPD_zmi, "vgetmantpd", 1, 3, 1, 1, 0x26, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGETMANTPS_zzi, "vgetmantps", 1, 3, 1, 0, 0x26, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGETMANTPS_zmi, "vgetmantps", 1, 3, 1, 0, 0x26, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMAXABSPS_zzz, "vgmaxabsps", 1, 2, 1, 0, 0x51, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMAXABSPS_zzm, "vgmaxabsps", 1, 2, 1, 0, 0x51, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMAXPD_zzz, "vgmaxpd", 1, 2, 1, 1, 0x53, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMAXPD_zzm, "vgmaxpd", 1, 2, 1, 1, 0x53, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMAXPS_zzz, "vgmaxps", 1, 2, 1, 0, 0x53, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMAXPS_zzm, "vgmaxps", 1, 2, 1, 0, 0x53, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMINPD_zzz, "vgminpd", 1, 2, 1, 1, 0x52, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMINPD_zzm, "vgminpd", 1, 2, 1, 1, 0x52, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMINPS_zzz, "vgminps", 1, 2, 1, 0, 0x52, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGMINPS_zzm, "vgminps", 1, 2, 1, 0, 0x52, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOADUNPACKHD_zm, "vloadunpackhd", 1, 2, 0, 0, 0xD4, 8, 2, 1, 7, 17, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOADUNPACKHPD_zm, "vloadunpackhpd", 1, 2, 0, 1, 0xD5, 8, 2, 1, 7, 18, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOADUNPACKHPS_zm, "vloadunpackhps", 1, 2, 0, 0, 0xD5, 8, 2, 1, 7, 19, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOADUNPACKHQ_zm, "vloadunpackhq", 1, 2, 0, 1, 0xD4, 8, 2, 1, 7, 18, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOADUNPACKLD_zm, "vloadunpackld", 1, 2, 0, 0, 0xD0, 8, 2, 1, 7, 17, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOADUNPACKLPD_zm, "vloadunpacklpd", 1, 2, 0, 1, 0xD1, 8, 2, 1, 7, 18, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOADUNPACKLPS_zm, "vloadunpacklps", 1, 2, 0, 0, 0xD1, 8, 2, 1, 7, 19, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOADUNPACKLQ_zm, "vloadunpacklq", 1, 2, 0, 1, 0xD0, 8, 2, 1, 7, 18, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOG2PS_zz, "vlog2ps", 1, 2, 1, 0, 0xC9, 8, 2, 1, 3, 0, 15, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VLOG2PS_zm, "vlog2ps", 1, 2, 1, 0, 0xC9, 8, 2, 1, 7, 6, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVAPD_zm, "vmovapd", 1, 1, 1, 1, 0x28, 8, 2, 1, 7, 20, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVAPD_zz, "vmovapd", 1, 1, 1, 1, 0x28, 8, 2, 1, 3, 0, 1, 0, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVAPD_mz, "vmovapd", 1, 1, 1, 1, 0x29, 8, 2, 5, 7, 6, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVAPS_zm, "vmovaps", 1, 1, 0, 0, 0x28, 8, 2, 1, 7, 21, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVAPS_zz, "vmovaps", 1, 1, 0, 0, 0x28, 8, 2, 1, 3, 0, 1, 0, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVAPS_mz, "vmovaps", 1, 1, 0, 0, 0x29, 8, 2, 5, 7, 22, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVDQA32_zm, "vmovdqa32", 1, 1, 1, 0, 0x6F, 8, 2, 1, 7, 23, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVDQA32_zz, "vmovdqa32", 1, 1, 1, 0, 0x6F, 8, 2, 1, 3, 0, 1, 0, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVDQA32_mz, "vmovdqa32", 1, 1, 1, 0, 0x7F, 8, 2, 5, 7, 24, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVDQA64_zm, "vmovdqa64", 1, 1, 1, 1, 0x6F, 8, 2, 1, 7, 20, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVDQA64_zz, "vmovdqa64", 1, 1, 1, 1, 0x6F, 8, 2, 1, 3, 0, 1, 0, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVDQA64_mz, "vmovdqa64", 1, 1, 1, 1, 0x7F, 8, 2, 5, 7, 6, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVNRAPD_mz, "vmovnrapd", 1, 1, 2, 1, 0x29, 8, 0, 5, 7, 6, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVNRAPS_mz, "vmovnraps", 1, 1, 3, 0, 0x29, 8, 0, 5, 7, 22, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVNRNGOAPD_mz, "vmovnrngoapd", 1, 1, 2, 1, 0x29, 8, 1, 5, 7, 6, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMOVNRNGOAPS_mz, "vmovnrngoaps", 1, 1, 3, 0, 0x29, 8, 1, 5, 7, 22, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMULPD_zzz, "vmulpd", 1, 1, 1, 1, 0x59, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMULPD_zzm, "vmulpd", 1, 1, 1, 1, 0x59, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMULPS_zzz, "vmulps", 1, 1, 0, 0, 0x59, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VMULPS_zzm, "vmulps", 1, 1, 0, 0, 0x59, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPACKSTOREHD_mz, "vpackstorehd", 1, 2, 1, 0, 0xD4, 8, 2, 5, 7, 25, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPACKSTOREHPD_mz, "vpackstorehpd", 1, 2, 1, 1, 0xD5, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPACKSTOREHPS_mz, "vpackstorehps", 1, 2, 1, 0, 0xD5, 8, 2, 5, 7, 11, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPACKSTOREHQ_mz, "vpackstorehq", 1, 2, 1, 1, 0xD4, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPACKSTORELD_mz, "vpackstoreld", 1, 2, 1, 0, 0xD0, 8, 2, 5, 7, 25, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPACKSTORELPD_mz, "vpackstorelpd", 1, 2, 1, 1, 0xD1, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPACKSTORELPS_mz, "vpackstorelps", 1, 2, 1, 0, 0xD1, 8, 2, 5, 7, 11, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPACKSTORELQ_mz, "vpackstorelq", 1, 2, 1, 1, 0xD0, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_MEM, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPADCD_zkz, "vpadcd", 1, 2, 1, 0, 0x5C, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPADCD_zkm, "vpadcd", 1, 2, 1, 0, 0x5C, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPADDD_zzz, "vpaddd", 1, 1, 1, 0, 0xFE, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPADDD_zzm, "vpaddd", 1, 1, 1, 0, 0xFE, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPADDSETCD_zkz, "vpaddsetcd", 1, 2, 1, 0, 0x5D, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPADDSETCD_zkm, "vpaddsetcd", 1, 2, 1, 0, 0x5D, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPADDSETSD_zzz, "vpaddsetsd", 1, 2, 1, 0, 0xCD, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPADDSETSD_zzm, "vpaddsetsd", 1, 2, 1, 0, 0xCD, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPANDD_zzz, "vpandd", 1, 1, 1, 0, 0xDB, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPANDD_zzm, "vpandd", 1, 1, 1, 0, 0xDB, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPANDND_zzz, "vpandnd", 1, 1, 1, 0, 0xDF, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPANDND_zzm, "vpandnd", 1, 1, 1, 0, 0xDF, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPANDNQ_zzz, "vpandnq", 1, 1, 1, 1, 0xDF, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPANDNQ_zzm, "vpandnq", 1, 1, 1, 1, 0xDF, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPANDQ_zzz, "vpandq", 1, 1, 1, 1, 0xDB, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPANDQ_zzm, "vpandq", 1, 1, 1, 1, 0xDB, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPBLENDMD_zzz, "vpblendmd", 1, 2, 1, 0, 0x64, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPBLENDMD_zzm, "vpblendmd", 1, 2, 1, 0, 0x64, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPBLENDMQ_zzz, "vpblendmq", 1, 2, 1, 1, 0x64, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPBLENDMQ_zzm, "vpblendmq", 1, 2, 1, 1, 0x64, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPBROADCASTD_zm, "vpbroadcastd", 1, 2, 1, 0, 0x58, 8, 2, 1, 7, 25, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPBROADCASTQ_zm, "vpbroadcastq", 1, 2, 1, 1, 0x59, 8, 2, 1, 7, 10, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPD_kzzi, "vpcmpd", 1, 3, 1, 0, 0x1F, 8, 2, 1, 5, 0, 1, 0, 0, 4, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {K_IMM, R_IMM, 4, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPD_kzmi, "vpcmpd", 1, 3, 1, 0, 0x1F, 8, 2, 1, 9, 14, 0, 0, 1, 4, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {K_IMM, R_IMM, 8, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPEQD_kzz, "vpcmpeqd", 1, 1, 1, 0, 0x76, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPEQD_kzm, "vpcmpeqd", 1, 1, 1, 0, 0x76, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPGTD_kzz, "vpcmpgtd", 1, 1, 1, 0, 0x66, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPGTD_kzm, "vpcmpgtd", 1, 1, 1, 0, 0x66, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPLTD_kzz, "vpcmpltd", 1, 2, 1, 0, 0x74, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPLTD_kzm, "vpcmpltd", 1, 2, 1, 0, 0x74, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPUD_kzzi, "vpcmpud", 1, 3, 1, 0, 0x1E, 8, 2, 1, 5, 0, 1, 0, 0, 4, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {K_IMM, R_IMM, 4, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPCMPUD_kzmi, "vpcmpud", 1, 3, 1, 0, 0x1E, 8, 2, 1, 9, 14, 0, 0, 1, 4, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {K_IMM, R_IMM, 8, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPERMD_zzz, "vpermd", 1, 2, 1, 0, 0x36, 8, 2, 1, -1, 0, 5, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPERMD_zzm, "vpermd", 1, 2, 1, 0, 0x36, 8, 2, 1, 8, 6, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 4}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPERMF32X4_zzi, "vpermf32x4", 1, 3, 1, 0, 0x07, 8, 2, 1, -1, 0, 5, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 0}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPERMF32X4_zmi, "vpermf32x4", 1, 3, 1, 0, 0x07, 8, 2, 1, 8, 6, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPGATHERDD_zv, "vpgatherdd", 1, 2, 1, 0, 0x90, 8, 2, 1, 7, 25, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPGATHERDQ_zv, "vpgatherdq", 1, 2, 1, 1, 0x90, 8, 2, 1, 7, 10, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMADD231D_zzz, "vpmadd231d", 1, 2, 1, 0, 0xB5, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMADD231D_zzm, "vpmadd231d", 1, 2, 1, 0, 0xB5, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMADD233D_zzz, "vpmadd233d", 1, 2, 1, 0, 0xB4, 8, 2, 1, 4, 0, 15, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMADD233D_zzm, "vpmadd233d", 1, 2, 1, 0, 0xB4, 8, 2, 1, 8, 16, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMAXSD_zzz, "vpmaxsd", 1, 2, 1, 0, 0x3D, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMAXSD_zzm, "vpmaxsd", 1, 2, 1, 0, 0x3D, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMAXUD_zzz, "vpmaxud", 1, 2, 1, 0, 0x3F, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMAXUD_zzm, "vpmaxud", 1, 2, 1, 0, 0x3F, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMINSD_zzz, "vpminsd", 1, 2, 1, 0, 0x39, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMINSD_zzm, "vpminsd", 1, 2, 1, 0, 0x39, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMINUD_zzz, "vpminud", 1, 2, 1, 0, 0x3B, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMINUD_zzm, "vpminud", 1, 2, 1, 0, 0x3B, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMULHD_zzz, "vpmulhd", 1, 2, 1, 0, 0x87, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMULHD_zzm, "vpmulhd", 1, 2, 1, 0, 0x87, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMULHUD_zzz, "vpmulhud", 1, 2, 1, 0, 0x86, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMULHUD_zzm, "vpmulhud", 1, 2, 1, 0, 0x86, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMULLD_zzz, "vpmulld", 1, 2, 1, 0, 0x40, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPMULLD_zzm, "vpmulld", 1, 2, 1, 0, 0x40, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPORD_zzz, "vpord", 1, 1, 1, 0, 0xEB, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPORD_zzm, "vpord", 1, 1, 1, 0, 0xEB, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPORQ_zzz, "vporq", 1, 1, 1, 1, 0xEB, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPORQ_zzm, "vporq", 1, 1, 1, 1, 0xEB, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCH0_m, "vprefetch0", 0, 1, 0, 2, 0x18, 1, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCH0_m_MVEX, "vprefetch0", 1, 1, 0, 2, 0x18, 1, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCH1_m, "vprefetch1", 0, 1, 0, 2, 0x18, 2, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCH1_m_MVEX, "vprefetch1", 1, 1, 0, 2, 0x18, 2, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCH2_m, "vprefetch2", 0, 1, 0, 2, 0x18, 3, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCH2_m_MVEX, "vprefetch2", 1, 1, 0, 2, 0x18, 3, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHE0_m, "vprefetche0", 0, 1, 0, 2, 0x18, 5, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHE0_m_MVEX, "vprefetche0", 1, 1, 0, 2, 0x18, 5, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHE1_m, "vprefetche1", 0, 1, 0, 2, 0x18, 6, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHE1_m_MVEX, "vprefetche1", 1, 1, 0, 2, 0x18, 6, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHE2_m, "vprefetche2", 0, 1, 0, 2, 0x18, 7, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHE2_m_MVEX, "vprefetche2", 1, 1, 0, 2, 0x18, 7, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHENTA_m, "vprefetchenta", 0, 1, 0, 2, 0x18, 4, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHENTA_m_MVEX, "vprefetchenta", 1, 1, 0, 2, 0x18, 4, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHNTA_m, "vprefetchnta", 0, 1, 0, 2, 0x18, 0, 2, -1, -1, 0, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPREFETCHNTA_m_MVEX, "vprefetchnta", 1, 1, 0, 2, 0x18, 0, 2, -1, -1, 6, 0, 0, 4, 1, {{K_M8, R_RM, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSBBD_zkz, "vpsbbd", 1, 2, 1, 0, 0x5E, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSBBD_zkm, "vpsbbd", 1, 2, 1, 0, 0x5E, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSBBRD_zkz, "vpsbbrd", 1, 2, 1, 0, 0x6E, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSBBRD_zkm, "vpsbbrd", 1, 2, 1, 0, 0x6E, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSCATTERDD_vz, "vpscatterdd", 1, 2, 1, 0, 0xA0, 8, 2, 5, 7, 25, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSCATTERDQ_vz, "vpscatterdq", 1, 2, 1, 1, 0xA0, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSHUFD_zzi, "vpshufd", 1, 1, 1, 0, 0x70, 8, 2, 1, -1, 0, 5, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 0}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSHUFD_zmi, "vpshufd", 1, 1, 1, 0, 0x70, 8, 2, 1, 8, 6, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSLLD_zzi, "vpslld", 1, 1, 1, 0, 0x72, 6, 2, 1, 4, 0, 1, 0, 3, 3, {{K_VR, R_VVVV, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSLLD_zmi, "vpslld", 1, 1, 1, 0, 0x72, 6, 2, 1, 8, 14, 0, 0, 4, 3, {{K_VR, R_VVVV, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSLLVD_zzz, "vpsllvd", 1, 2, 1, 0, 0x47, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSLLVD_zzm, "vpsllvd", 1, 2, 1, 0, 0x47, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSRAD_zzi, "vpsrad", 1, 1, 1, 0, 0x72, 4, 2, 1, 4, 0, 1, 0, 3, 3, {{K_VR, R_VVVV, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSRAD_zmi, "vpsrad", 1, 1, 1, 0, 0x72, 4, 2, 1, 8, 14, 0, 0, 4, 3, {{K_VR, R_VVVV, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSRAVD_zzz, "vpsravd", 1, 2, 1, 0, 0x46, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSRAVD_zzm, "vpsravd", 1, 2, 1, 0, 0x46, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSRLD_zzi, "vpsrld", 1, 1, 1, 0, 0x72, 2, 2, 1, 4, 0, 1, 0, 3, 3, {{K_VR, R_VVVV, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSRLD_zmi, "vpsrld", 1, 1, 1, 0, 0x72, 2, 2, 1, 8, 14, 0, 0, 4, 3, {{K_VR, R_VVVV, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSRLVD_zzz, "vpsrlvd", 1, 2, 1, 0, 0x45, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSRLVD_zzm, "vpsrlvd", 1, 2, 1, 0, 0x45, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSUBD_zzz, "vpsubd", 1, 1, 1, 0, 0xFA, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSUBD_zzm, "vpsubd", 1, 1, 1, 0, 0xFA, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSUBRD_zzz, "vpsubrd", 1, 2, 1, 0, 0x6C, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSUBRD_zzm, "vpsubrd", 1, 2, 1, 0, 0x6C, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSUBRSETBD_zkz, "vpsubrsetbd", 1, 2, 1, 0, 0x6F, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSUBRSETBD_zkm, "vpsubrsetbd", 1, 2, 1, 0, 0x6F, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSUBSETBD_zkz, "vpsubsetbd", 1, 2, 1, 0, 0x5F, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSUBSETBD_zkm, "vpsubsetbd", 1, 2, 1, 0, 0x5F, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPTESTMD_kzz, "vptestmd", 1, 2, 1, 0, 0x27, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPTESTMD_kzm, "vptestmd", 1, 2, 1, 0, 0x27, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_KR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPXORD_zzz, "vpxord", 1, 1, 1, 0, 0xEF, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPXORD_zzm, "vpxord", 1, 1, 1, 0, 0xEF, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPXORQ_zzz, "vpxorq", 1, 1, 1, 1, 0xEF, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPXORQ_zzm, "vpxorq", 1, 1, 1, 1, 0xEF, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VRCP23PS_zz, "vrcp23ps", 1, 2, 1, 0, 0xCA, 8, 2, 1, 3, 0, 15, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VRCP23PS_zm, "vrcp23ps", 1, 2, 1, 0, 0xCA, 8, 2, 1, 7, 6, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VRNDFXPNTPD_zzi, "vrndfxpntpd", 1, 3, 1, 1, 0x52, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VRNDFXPNTPD_zmi, "vrndfxpntpd", 1, 3, 1, 1, 0x52, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VRNDFXPNTPS_zzi, "vrndfxpntps", 1, 3, 1, 0, 0x52, 8, 2, 1, 4, 0, 1, 12, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VRNDFXPNTPS_zmi, "vrndfxpntps", 1, 3, 1, 0, 0x52, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VRSQRT23PS_zz, "vrsqrt23ps", 1, 2, 1, 0, 0xCB, 8, 2, 1, 3, 0, 15, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VRSQRT23PS_zm, "vrsqrt23ps", 1, 2, 1, 0, 0xCB, 8, 2, 1, 7, 6, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCALEPS_zzz, "vscaleps", 1, 2, 1, 0, 0x84, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCALEPS_zzm, "vscaleps", 1, 2, 1, 0, 0x84, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERDPD_vz, "vscatterdpd", 1, 2, 1, 1, 0xA2, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERDPS_vz, "vscatterdps", 1, 2, 1, 0, 0xA2, 8, 2, 5, 7, 11, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERPF0DPS_v, "vscatterpf0dps", 1, 2, 1, 0, 0xC6, 5, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERPF0HINTDPD_v, "vscatterpf0hintdpd", 1, 2, 1, 1, 0xC6, 4, 2, 0, 6, 10, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERPF0HINTDPS_v, "vscatterpf0hintdps", 1, 2, 1, 0, 0xC6, 4, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERPF1DPS_v, "vscatterpf1dps", 1, 2, 1, 0, 0xC6, 6, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSUBPD_zzz, "vsubpd", 1, 1, 1, 1, 0x5C, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSUBPD_zzm, "vsubpd", 1, 1, 1, 1, 0x5C, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSUBPS_zzz, "vsubps", 1, 1, 0, 0, 0x5C, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSUBPS_zzm, "vsubps", 1, 1, 0, 0, 0x5C, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSUBRPD_zzz, "vsubrpd", 1, 2, 1, 1, 0x6D, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSUBRPD_zzm, "vsubrpd", 1, 2, 1, 1, 0x6D, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSUBRPS_zzz, "vsubrps", 1, 2, 1, 0, 0x6D, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSUBRPS_zzm, "vsubrps", 1, 2, 1, 0, 0x6D, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++};
++
++static const PseudoOp PseudoOps[] = {
++  {"vcmpeqpd", "vcmppd", 0},
++  {"vcmpltpd", "vcmppd", 1},
++  {"vcmplepd", "vcmppd", 2},
++  {"vcmpunordpd", "vcmppd", 3},
++  {"vcmpneqpd", "vcmppd", 4},
++  {"vcmpnltpd", "vcmppd", 5},
++  {"vcmpnlepd", "vcmppd", 6},
++  {"vcmpordpd", "vcmppd", 7},
++  {"vcmpeqps", "vcmpps", 0},
++  {"vcmpltps", "vcmpps", 1},
++  {"vcmpleps", "vcmpps", 2},
++  {"vcmpunordps", "vcmpps", 3},
++  {"vcmpneqps", "vcmpps", 4},
++  {"vcmpnltps", "vcmpps", 5},
++  {"vcmpnleps", "vcmpps", 6},
++  {"vcmpordps", "vcmpps", 7},
++  {"vpcmpled", "vpcmpd", 2},
++  {"vpcmpneqd", "vpcmpd", 4},
++  {"vpcmpnltd", "vpcmpd", 5},
++  {"vpcmpequd", "vpcmpud", 0},
++  {"vpcmpltud", "vpcmpud", 1},
++  {"vpcmpleud", "vpcmpud", 2},
++  {"vpcmpnequd", "vpcmpud", 4},
++  {"vpcmpnltud", "vpcmpud", 5},
++  {"vpcmpnleud", "vpcmpud", 6},
++  {"vpcmpnled", "vpcmpgtd", 255},
++};
+diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86MCCodeEmitter.cpp b/llvm/lib/Target/X86/MCTargetDesc/X86MCCodeEmitter.cpp
+index f40e41af5..3a9679e28 100644
+--- a/llvm/lib/Target/X86/MCTargetDesc/X86MCCodeEmitter.cpp
++++ b/llvm/lib/Target/X86/MCTargetDesc/X86MCCodeEmitter.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include "MCTargetDesc/X86BaseInfo.h"
+ #include "MCTargetDesc/X86FixupKinds.h"
++#include "MCTargetDesc/X86KNCInfo.h"
+ #include "MCTargetDesc/X86MCAsmInfo.h"
+ #include "MCTargetDesc/X86MCTargetDesc.h"
+ #include "llvm/ADT/SmallVector.h"
+@@ -38,7 +39,7 @@ using namespace llvm;
+ 
+ namespace {
+ 
+-enum PrefixKind { None, REX, REX2, XOP, VEX2, VEX3, EVEX };
++enum PrefixKind { None, REX, REX2, XOP, VEX2, VEX3, EVEX, MVEX };
+ 
+ static void emitByte(uint8_t C, SmallVectorImpl<char> &CB) { CB.push_back(C); }
+ 
+@@ -259,6 +260,14 @@ public:
+     EVEX_aaa = getRegEncoding(MI, OpNum);
+   }
+   void setNF(bool V) { EVEX_aaa |= V << 2; }
++  // MVEX (Knights Corner): E << 3 | SSS take the places of z, L'L and b.
++  void setMVEX(unsigned Bits) {
++    Kind = MVEX;
++    EVEX_z = Bits >> 3 & 1;
++    EVEX_L2 = Bits >> 2 & 1;
++    VEX_L = Bits >> 1 & 1;
++    EVEX_b = Bits & 1;
++  }
+   void setSC(const MCInst &MI, unsigned OpNum) {
+     unsigned Encoding = MI.getOperand(OpNum).getImm();
+     EVEX_V2 = ~(Encoding >> 3) & 0x1;
+@@ -287,6 +296,7 @@ public:
+     case XOP:
+     case VEX3:
+     case EVEX:
++    case MVEX:
+       break;
+     case VEX2:
+       Kind = (W | X | B | (VEX_5M != 1)) ? VEX3 : VEX2;
+@@ -331,6 +341,18 @@ public:
+                    ((~EVEX_V2) & 0x1) << 3 | EVEX_aaa,
+                CB);
+       return;
++    case MVEX:
++      // 62h | R X B R' 0 0 m m | W vvvv 0 pp | E S S S V' a a a
++      // (Intel 327364-001, section 3.3.1). P0 bit 3 and P1 bit 2 are 0,
++      // which tells MVEX from EVEX.
++      assert(VEX_5M && VEX_5M <= 3 && "invalid mm field for MVEX!");
++      emitByte(0x62, CB);
++      emitByte(FirstPayload | ((~R2) & 0x1) << 4 | VEX_5M, CB);
++      emitByte(W << 7 | ((~VEX_4V) & 0xf) << 3 | VEX_PP, CB);
++      emitByte(EVEX_z << 7 | EVEX_L2 << 6 | VEX_L << 5 | EVEX_b << 4 |
++                   ((~EVEX_V2) & 0x1) << 3 | EVEX_aaa,
++               CB);
++      return;
+     }
+   }
+ };
+@@ -412,16 +434,25 @@ static void emitConstant(uint64_t Val, unsigned Size,
+   }
+ }
+ 
+-/// Determine if this immediate can fit in a disp8 or a compressed disp8 for
+-/// EVEX instructions. \p will be set to the value to pass to the ImmOffset
+-/// parameter of emitImmediate.
+-static bool isDispOrCDisp8(uint64_t TSFlags, int Value, int &ImmOffset) {
+-  bool HasEVEX = (TSFlags & X86II::EncodingMask) == X86II::EVEX;
+-
++/// The compressed disp8 scale (disp8*N) of an instruction, or 0 when its
++/// disp8 is not scaled. For EVEX it is fixed per opcode; for MVEX it
++/// depends on the memory conversion the instruction carries (Intel
++/// 327364-001, tables 3.3 and 3.4).
++static unsigned getCDisp8Scale(uint64_t TSFlags, const MCInst &MI) {
++  if (TSFlags & X86II::MVEX)
++    return X86KNC::getDisp8Scale(MI);
++  if ((TSFlags & X86II::EncodingMask) != X86II::EVEX)
++    return 0;
+   unsigned CD8_Scale =
+       (TSFlags & X86II::CD8_Scale_Mask) >> X86II::CD8_Scale_Shift;
+-  CD8_Scale = CD8_Scale ? 1U << (CD8_Scale - 1) : 0U;
+-  if (!HasEVEX || !CD8_Scale)
++  return CD8_Scale ? 1U << (CD8_Scale - 1) : 0U;
++}
++
++/// Determine if this immediate can fit in a disp8 or a compressed disp8 for
++/// EVEX and MVEX instructions. \p will be set to the value to pass to the
++/// ImmOffset parameter of emitImmediate.
++static bool isDispOrCDisp8(unsigned CD8_Scale, int Value, int &ImmOffset) {
++  if (!CD8_Scale)
+     return isInt<8>(Value);
+ 
+   assert(isPowerOf2_32(CD8_Scale) && "Unexpected CD8 scale!");
+@@ -815,7 +846,8 @@ void X86MCCodeEmitter::emitMemModRMByte(
+     // can't use disp8 if the {disp32} pseudo prefix is present.
+     if (Disp.isImm() && AllowDisp8) {
+       int ImmOffset = 0;
+-      if (isDispOrCDisp8(TSFlags, Disp.getImm(), ImmOffset)) {
++      if (isDispOrCDisp8(getCDisp8Scale(TSFlags, MI), Disp.getImm(),
++                         ImmOffset)) {
+         emitByte(modRMByte(1, RegOpcodeField, BaseRegNo), CB);
+         emitImmediate(Disp, MI.getLoc(), FK_Data_1, false, StartByte, CB,
+                       Fixups, ImmOffset);
+@@ -857,7 +889,8 @@ void X86MCCodeEmitter::emitMemModRMByte(
+     // Emit no displacement ModR/M byte
+     emitByte(modRMByte(0, RegOpcodeField, 4), CB);
+   } else if (Disp.isImm() && AllowDisp8 &&
+-             isDispOrCDisp8(TSFlags, Disp.getImm(), ImmOffset)) {
++             isDispOrCDisp8(getCDisp8Scale(TSFlags, MI), Disp.getImm(),
++                            ImmOffset)) {
+     // Displacement fits in a byte or matches an EVEX compressed disp8, use
+     // disp8 encoding. This also handles EBP/R13/R21/R29 base with 0
+     // displacement unless {disp32} pseudo prefix was used.
+@@ -1327,6 +1360,8 @@ X86MCCodeEmitter::emitVEXOpcodePrefix(int MemOperand, const MCInst &MI,
+     Prefix.setL(EVEX_rc & 0x1);
+     Prefix.setL2(EVEX_rc & 0x2);
+   }
++  if (TSFlags & X86II::MVEX)
++    Prefix.setMVEX(X86KNC::getMVEXBits(MI));
+   PrefixKind Kind = Prefix.determineOptimalKind();
+   Prefix.emit(CB);
+   return Kind;
+@@ -1564,6 +1599,11 @@ void X86MCCodeEmitter::encodeInstruction(const MCInst &MI,
+   unsigned NumOps = Desc.getNumOperands();
+   unsigned CurOp = X86II::getOperandBias(Desc);
+ 
++  // The trailing E << 3 | SSS operand of an MVEX form is encoded in the
++  // prefix, not as an immediate.
++  if ((TSFlags & X86II::MVEX) && X86KNC::hasSSSOperand(Opcode))
++    --NumOps;
++
+   uint64_t StartByte = CB.size();
+ 
+   PrefixKind Kind = emitPrefixImpl(CurOp, MI, STI, CB);
+diff --git a/llvm/lib/Target/X86/X86InstrFormats.td b/llvm/lib/Target/X86/X86InstrFormats.td
+index 7a9c164c0..74966b908 100644
+--- a/llvm/lib/Target/X86/X86InstrFormats.td
++++ b/llvm/lib/Target/X86/X86InstrFormats.td
+@@ -283,6 +283,7 @@ class X86Inst<bits<8> opcod, Format f, ImmType i, dag outs, dag ins,
+   ExplicitOpPrefix explicitOpPrefix = NoExplicitOpPrefix;
+   bits<2> explicitOpPrefixBits = explicitOpPrefix.Value;
+   bit hasEVEX_U = 0;       // Does this inst set the EVEX_U field?
++  bit isMVEX = 0;          // Knights Corner MVEX form (X86InstrKNC.td)?
+   // TSFlags layout should be kept in sync with X86BaseInfo.h.
+   let TSFlags{6-0}   = FormBits;
+   let TSFlags{8-7}   = OpSizeBits;
+@@ -311,4 +312,5 @@ class X86Inst<bits<8> opcod, Format f, ImmType i, dag outs, dag ins,
+   let TSFlags{52}    = hasEVEX_NF;
+   let TSFlags{53}    = hasTwoConditionalOps;
+   let TSFlags{54}    = hasEVEX_U;
++  let TSFlags{55}    = isMVEX;
+ }
+diff --git a/llvm/lib/Target/X86/X86InstrInfo.td b/llvm/lib/Target/X86/X86InstrInfo.td
+index 0c4abc2c4..d420d3638 100644
+--- a/llvm/lib/Target/X86/X86InstrInfo.td
++++ b/llvm/lib/Target/X86/X86InstrInfo.td
+@@ -69,6 +69,7 @@ include "X86InstrXOP.td"
+ include "X86InstrSSE.td"
+ include "X86InstrAVX512.td"
+ include "X86InstrAVX10.td"
++include "X86InstrKNC.td"
+ include "X86InstrMMX.td"
+ include "X86Instr3DNow.td"
+ 
+diff --git a/llvm/lib/Target/X86/X86InstrKNC.td b/llvm/lib/Target/X86/X86InstrKNC.td
+new file mode 100644
+index 000000000..b146aa15b
+--- /dev/null
++++ b/llvm/lib/Target/X86/X86InstrKNC.td
+@@ -0,0 +1,691 @@
++//===-- X86InstrKNC.td - Knights Corner vector instructions -*- tablegen -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++// Generated by Intel-Phi-LLVM tools/knc-gen.c from isa/knc-isa.txt, which is
++// extracted from the Intel Xeon Phi Coprocessor Instruction Set Architecture
++// Reference Manual (327364-001). Do not edit by hand.
++//
++// The MVEX forms are EVEX-encoded defs with isMVEX set; the trailing
++// mvex_sss operand holds MVEX.E << 3 | MVEX.SSS. Syntax, decorations and
++// disp8*N come from X86KNCInfo.inc, so these defs are isCodeGenOnly and the
++// generic matcher and decoder tables never see them.
++//
++//===----------------------------------------------------------------------===//
++
++def mvex_sss : Operand<i8> {
++  let OperandType = "OPERAND_IMMEDIATE";
++}
++
++// Marks every Knights Corner def, so the TableGen backends that pair
++// instructions by encoding (EVEX compression, fold tables) skip them.
++class KNCEnc;
++class KNC_I<bits<8> o, Format f, dag outs, dag ins, string m>
++  : I<o, f, outs, ins, m, []>, KNCEnc;
++class KNC_Ii8<bits<8> o, Format f, dag outs, dag ins, string m>
++  : Ii8<o, f, outs, ins, m, []>, KNCEnc;
++
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KAND_kk : KNC_I<0x41, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kand">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KANDN_kk : KNC_I<0x42, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kandn">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KANDNR_kk : KNC_I<0x43, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kandnr">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KCONCATH_qkk : KNC_I<0x95, MRMSrcReg, (outs GR64:$op0), (ins VK16:$op1, VK16:$op2), "kconcath">, VEX, TB, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KCONCATL_qkk : KNC_I<0x97, MRMSrcReg, (outs GR64:$op0), (ins VK16:$op1, VK16:$op2), "kconcatl">, VEX, TB, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KEXTRACT_kqi : KNC_Ii8<0x3E, MRMSrcReg, (outs VK16:$op0), (ins GR64:$op1, u8imm:$op2), "kextract">, VEX, TA, PD;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KMERGE2L1H_kk : KNC_I<0x48, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kmerge2l1h">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KMERGE2L1L_kk : KNC_I<0x49, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kmerge2l1l">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KMOV_kk : KNC_I<0x90, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kmov">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KMOV_rk : KNC_I<0x93, MRMSrcReg, (outs GR32:$op0), (ins VK16:$op1), "kmov">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KMOV_kr : KNC_I<0x92, MRMSrcReg, (outs VK16:$op0), (ins GR32:$op1), "kmov">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KNOT_kk : KNC_I<0x44, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "knot">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KOR_kk : KNC_I<0x45, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kor">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_KORTEST_kk : KNC_I<0x98, MRMSrcReg, (outs), (ins VK16:$op0, VK16:$op1), "kortest">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KXNOR_kk : KNC_I<0x46, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kxnor">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ] in
++def KNC_KXOR_kk : KNC_I<0x47, MRMSrcReg, (outs VK16:$op0), (ins VK16:$op1), "kxor">, VEX, TB;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VADDNPD_zzz : KNC_I<0x50, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vaddnpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VADDNPD_zzm : KNC_I<0x50, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vaddnpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VADDNPS_zzz : KNC_I<0x50, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vaddnps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VADDNPS_zzm : KNC_I<0x50, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vaddnps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VADDPD_zzz : KNC_I<0x58, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vaddpd">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VADDPD_zzm : KNC_I<0x58, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vaddpd">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VADDPS_zzz : KNC_I<0x58, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vaddps">, EVEX, TB, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VADDPS_zzm : KNC_I<0x58, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vaddps">, EVEX, TB, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VADDSETSPS_zzz : KNC_I<0xCC, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vaddsetsps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VADDSETSPS_zzm : KNC_I<0xCC, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vaddsetsps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VALIGND_zzzi : KNC_Ii8<0x03, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, u8imm:$op3), "valignd">, EVEX, TA, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VALIGND_zzmi : KNC_Ii8<0x03, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, u8imm:$op3, mvex_sss:$sss), "valignd">, EVEX, TA, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VBLENDMPD_zzz : KNC_I<0x65, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vblendmpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VBLENDMPD_zzm : KNC_I<0x65, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vblendmpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VBLENDMPS_zzz : KNC_I<0x65, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vblendmps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VBLENDMPS_zzm : KNC_I<0x65, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vblendmps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VBROADCASTF32X4_zm : KNC_I<0x1A, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vbroadcastf32x4">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VBROADCASTF64X4_zm : KNC_I<0x1B, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vbroadcastf64x4">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VBROADCASTI32X4_zm : KNC_I<0x5A, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vbroadcasti32x4">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VBROADCASTI64X4_zm : KNC_I<0x5B, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vbroadcasti64x4">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VBROADCASTSD_zm : KNC_I<0x19, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vbroadcastsd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VBROADCASTSS_zm : KNC_I<0x18, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vbroadcastss">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCMPPD_kzzi : KNC_Ii8<0xC2, MRMSrcReg, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, u8imm:$op3, mvex_sss:$sss), "vcmppd">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCMPPD_kzmi : KNC_Ii8<0xC2, MRMSrcMem, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, u8imm:$op3, mvex_sss:$sss), "vcmppd">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCMPPS_kzzi : KNC_Ii8<0xC2, MRMSrcReg, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, u8imm:$op3, mvex_sss:$sss), "vcmpps">, EVEX, TB, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCMPPS_kzmi : KNC_Ii8<0xC2, MRMSrcMem, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, u8imm:$op3, mvex_sss:$sss), "vcmpps">, EVEX, TB, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTDQ2PD_zz : KNC_I<0xE6, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vcvtdq2pd">, EVEX, TB, XS, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTDQ2PD_zm : KNC_I<0xE6, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vcvtdq2pd">, EVEX, TB, XS, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTFXPNTDQ2PS_zzi : KNC_Ii8<0xCB, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntdq2ps">, EVEX, TA, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTFXPNTDQ2PS_zmi : KNC_Ii8<0xCB, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntdq2ps">, EVEX, TA, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTFXPNTPD2DQ_zzi : KNC_Ii8<0xE6, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntpd2dq">, EVEX, TA, XD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTFXPNTPD2DQ_zmi : KNC_Ii8<0xE6, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntpd2dq">, EVEX, TA, XD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTFXPNTPD2UDQ_zzi : KNC_Ii8<0xCA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntpd2udq">, EVEX, TA, XD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTFXPNTPD2UDQ_zmi : KNC_Ii8<0xCA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntpd2udq">, EVEX, TA, XD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTFXPNTPS2DQ_zzi : KNC_Ii8<0xCB, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntps2dq">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTFXPNTPS2DQ_zmi : KNC_Ii8<0xCB, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntps2dq">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTFXPNTPS2UDQ_zzi : KNC_Ii8<0xCA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntps2udq">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTFXPNTPS2UDQ_zmi : KNC_Ii8<0xCA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntps2udq">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTFXPNTUDQ2PS_zzi : KNC_Ii8<0xCA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntudq2ps">, EVEX, TA, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTFXPNTUDQ2PS_zmi : KNC_Ii8<0xCA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vcvtfxpntudq2ps">, EVEX, TA, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTPD2PS_zz : KNC_I<0x5A, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vcvtpd2ps">, EVEX, TB, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTPD2PS_zm : KNC_I<0x5A, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vcvtpd2ps">, EVEX, TB, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTPS2PD_zz : KNC_I<0x5A, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vcvtps2pd">, EVEX, TB, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTPS2PD_zm : KNC_I<0x5A, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vcvtps2pd">, EVEX, TB, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VCVTUDQ2PD_zz : KNC_I<0x7A, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vcvtudq2pd">, EVEX, TB, XS, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VCVTUDQ2PD_zm : KNC_I<0x7A, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vcvtudq2pd">, EVEX, TB, XS, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VEXP223PS_zz : KNC_I<0xC8, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vexp223ps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VEXP223PS_zm : KNC_I<0xC8, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vexp223ps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFIXUPNANPD_zzz : KNC_I<0x55, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfixupnanpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFIXUPNANPD_zzm : KNC_I<0x55, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfixupnanpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFIXUPNANPS_zzz : KNC_I<0x55, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfixupnanps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFIXUPNANPS_zzm : KNC_I<0x55, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfixupnanps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMADD132PD_zzz : KNC_I<0x98, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmadd132pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMADD132PD_zzm : KNC_I<0x98, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmadd132pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMADD132PS_zzz : KNC_I<0x98, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmadd132ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMADD132PS_zzm : KNC_I<0x98, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmadd132ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMADD213PD_zzz : KNC_I<0xA8, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmadd213pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMADD213PD_zzm : KNC_I<0xA8, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmadd213pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMADD213PS_zzz : KNC_I<0xA8, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmadd213ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMADD213PS_zzm : KNC_I<0xA8, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmadd213ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMADD231PD_zzz : KNC_I<0xB8, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmadd231pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMADD231PD_zzm : KNC_I<0xB8, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmadd231pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMADD231PS_zzz : KNC_I<0xB8, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmadd231ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMADD231PS_zzm : KNC_I<0xB8, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmadd231ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMADD233PS_zzz : KNC_I<0xA4, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmadd233ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMADD233PS_zzm : KNC_I<0xA4, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmadd233ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMSUB132PD_zzz : KNC_I<0x9A, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmsub132pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMSUB132PD_zzm : KNC_I<0x9A, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmsub132pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMSUB132PS_zzz : KNC_I<0x9A, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmsub132ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMSUB132PS_zzm : KNC_I<0x9A, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmsub132ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMSUB213PD_zzz : KNC_I<0xAA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmsub213pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMSUB213PD_zzm : KNC_I<0xAA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmsub213pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMSUB213PS_zzz : KNC_I<0xAA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmsub213ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMSUB213PS_zzm : KNC_I<0xAA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmsub213ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMSUB231PD_zzz : KNC_I<0xBA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmsub231pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMSUB231PD_zzm : KNC_I<0xBA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmsub231pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFMSUB231PS_zzz : KNC_I<0xBA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfmsub231ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFMSUB231PS_zzm : KNC_I<0xBA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfmsub231ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMADD132PD_zzz : KNC_I<0x9C, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmadd132pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMADD132PD_zzm : KNC_I<0x9C, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmadd132pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMADD132PS_zzz : KNC_I<0x9C, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmadd132ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMADD132PS_zzm : KNC_I<0x9C, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmadd132ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMADD213PD_zzz : KNC_I<0xAC, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmadd213pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMADD213PD_zzm : KNC_I<0xAC, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmadd213pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMADD213PS_zzz : KNC_I<0xAC, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmadd213ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMADD213PS_zzm : KNC_I<0xAC, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmadd213ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMADD231PD_zzz : KNC_I<0xBC, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmadd231pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMADD231PD_zzm : KNC_I<0xBC, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmadd231pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMADD231PS_zzz : KNC_I<0xBC, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmadd231ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMADD231PS_zzm : KNC_I<0xBC, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmadd231ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMSUB132PD_zzz : KNC_I<0x9E, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmsub132pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMSUB132PD_zzm : KNC_I<0x9E, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmsub132pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMSUB132PS_zzz : KNC_I<0x9E, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmsub132ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMSUB132PS_zzm : KNC_I<0x9E, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmsub132ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMSUB213PD_zzz : KNC_I<0xAE, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmsub213pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMSUB213PD_zzm : KNC_I<0xAE, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmsub213pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMSUB213PS_zzz : KNC_I<0xAE, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmsub213ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMSUB213PS_zzm : KNC_I<0xAE, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmsub213ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMSUB231PD_zzz : KNC_I<0xBE, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmsub231pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMSUB231PD_zzm : KNC_I<0xBE, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmsub231pd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VFNMSUB231PS_zzz : KNC_I<0xBE, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vfnmsub231ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VFNMSUB231PS_zzm : KNC_I<0xBE, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vfnmsub231ps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGATHERDPD_zv : KNC_I<0x92, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, vz32mem:$op1, mvex_sss:$sss), "vgatherdpd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGATHERDPS_zv : KNC_I<0x92, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, vz32mem:$op1, mvex_sss:$sss), "vgatherdps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGATHERPF0DPS_v : KNC_I<0xC6, MRM1m, (outs), (ins VK16:$mask, vz32mem:$op0, mvex_sss:$sss), "vgatherpf0dps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGATHERPF0HINTDPD_v : KNC_I<0xC6, MRM0m, (outs), (ins VK16:$mask, vz32mem:$op0, mvex_sss:$sss), "vgatherpf0hintdpd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGATHERPF0HINTDPS_v : KNC_I<0xC6, MRM0m, (outs), (ins VK16:$mask, vz32mem:$op0, mvex_sss:$sss), "vgatherpf0hintdps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGATHERPF1DPS_v : KNC_I<0xC6, MRM2m, (outs), (ins VK16:$mask, vz32mem:$op0, mvex_sss:$sss), "vgatherpf1dps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGETEXPPD_zz : KNC_I<0x42, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vgetexppd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGETEXPPD_zm : KNC_I<0x42, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vgetexppd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGETEXPPS_zz : KNC_I<0x42, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vgetexpps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGETEXPPS_zm : KNC_I<0x42, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vgetexpps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGETMANTPD_zzi : KNC_Ii8<0x26, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vgetmantpd">, EVEX, TA, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGETMANTPD_zmi : KNC_Ii8<0x26, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vgetmantpd">, EVEX, TA, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGETMANTPS_zzi : KNC_Ii8<0x26, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vgetmantps">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGETMANTPS_zmi : KNC_Ii8<0x26, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vgetmantps">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGMAXABSPS_zzz : KNC_I<0x51, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vgmaxabsps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGMAXABSPS_zzm : KNC_I<0x51, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vgmaxabsps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGMAXPD_zzz : KNC_I<0x53, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vgmaxpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGMAXPD_zzm : KNC_I<0x53, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vgmaxpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGMAXPS_zzz : KNC_I<0x53, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vgmaxps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGMAXPS_zzm : KNC_I<0x53, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vgmaxps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGMINPD_zzz : KNC_I<0x52, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vgminpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGMINPD_zzm : KNC_I<0x52, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vgminpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VGMINPS_zzz : KNC_I<0x52, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vgminps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VGMINPS_zzm : KNC_I<0x52, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vgminps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOADUNPACKHD_zm : KNC_I<0xD4, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vloadunpackhd">, EVEX, T8, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOADUNPACKHPD_zm : KNC_I<0xD5, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vloadunpackhpd">, EVEX, T8, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOADUNPACKHPS_zm : KNC_I<0xD5, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vloadunpackhps">, EVEX, T8, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOADUNPACKHQ_zm : KNC_I<0xD4, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vloadunpackhq">, EVEX, T8, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOADUNPACKLD_zm : KNC_I<0xD0, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vloadunpackld">, EVEX, T8, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOADUNPACKLPD_zm : KNC_I<0xD1, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vloadunpacklpd">, EVEX, T8, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOADUNPACKLPS_zm : KNC_I<0xD1, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vloadunpacklps">, EVEX, T8, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOADUNPACKLQ_zm : KNC_I<0xD0, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vloadunpacklq">, EVEX, T8, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VLOG2PS_zz : KNC_I<0xC9, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vlog2ps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VLOG2PS_zm : KNC_I<0xC9, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vlog2ps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VMOVAPD_zm : KNC_I<0x28, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vmovapd">, EVEX, TB, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VMOVAPD_zz : KNC_I<0x28, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovapd">, EVEX, TB, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VMOVAPD_mz : KNC_I<0x29, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovapd">, EVEX, TB, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VMOVAPS_zm : KNC_I<0x28, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vmovaps">, EVEX, TB, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VMOVAPS_zz : KNC_I<0x28, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovaps">, EVEX, TB, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VMOVAPS_mz : KNC_I<0x29, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovaps">, EVEX, TB, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VMOVDQA32_zm : KNC_I<0x6F, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vmovdqa32">, EVEX, TB, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VMOVDQA32_zz : KNC_I<0x6F, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovdqa32">, EVEX, TB, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VMOVDQA32_mz : KNC_I<0x7F, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovdqa32">, EVEX, TB, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VMOVDQA64_zm : KNC_I<0x6F, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vmovdqa64">, EVEX, TB, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VMOVDQA64_zz : KNC_I<0x6F, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovdqa64">, EVEX, TB, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VMOVDQA64_mz : KNC_I<0x7F, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovdqa64">, EVEX, TB, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VMOVNRAPD_mz : KNC_I<0x29, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovnrapd">, EVEX, TB, XS, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VMOVNRAPS_mz : KNC_I<0x29, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovnraps">, EVEX, TB, XD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VMOVNRNGOAPD_mz : KNC_I<0x29, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovnrngoapd">, EVEX, TB, XS, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VMOVNRNGOAPS_mz : KNC_I<0x29, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vmovnrngoaps">, EVEX, TB, XD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VMULPD_zzz : KNC_I<0x59, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vmulpd">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VMULPD_zzm : KNC_I<0x59, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vmulpd">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VMULPS_zzz : KNC_I<0x59, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vmulps">, EVEX, TB, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VMULPS_zzm : KNC_I<0x59, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vmulps">, EVEX, TB, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPACKSTOREHD_mz : KNC_I<0xD4, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpackstorehd">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPACKSTOREHPD_mz : KNC_I<0xD5, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpackstorehpd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPACKSTOREHPS_mz : KNC_I<0xD5, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpackstorehps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPACKSTOREHQ_mz : KNC_I<0xD4, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpackstorehq">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPACKSTORELD_mz : KNC_I<0xD0, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpackstoreld">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPACKSTORELPD_mz : KNC_I<0xD1, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpackstorelpd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPACKSTORELPS_mz : KNC_I<0xD1, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpackstorelps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPACKSTORELQ_mz : KNC_I<0xD0, MRMDestMem, (outs), (ins i512mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpackstorelq">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPADCD_zkz : KNC_I<0x5C, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, VR512:$op2, mvex_sss:$sss), "vpadcd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPADCD_zkm : KNC_I<0x5C, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, i512mem:$op2, mvex_sss:$sss), "vpadcd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPADDD_zzz : KNC_I<0xFE, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpaddd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPADDD_zzm : KNC_I<0xFE, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpaddd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPADDSETCD_zkz : KNC_I<0x5D, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, VR512:$op2, mvex_sss:$sss), "vpaddsetcd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPADDSETCD_zkm : KNC_I<0x5D, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, i512mem:$op2, mvex_sss:$sss), "vpaddsetcd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPADDSETSD_zzz : KNC_I<0xCD, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpaddsetsd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPADDSETSD_zzm : KNC_I<0xCD, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpaddsetsd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPANDD_zzz : KNC_I<0xDB, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpandd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPANDD_zzm : KNC_I<0xDB, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpandd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPANDND_zzz : KNC_I<0xDF, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpandnd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPANDND_zzm : KNC_I<0xDF, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpandnd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPANDNQ_zzz : KNC_I<0xDF, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpandnq">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPANDNQ_zzm : KNC_I<0xDF, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpandnq">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPANDQ_zzz : KNC_I<0xDB, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpandq">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPANDQ_zzm : KNC_I<0xDB, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpandq">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPBLENDMD_zzz : KNC_I<0x64, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpblendmd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPBLENDMD_zzm : KNC_I<0x64, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpblendmd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPBLENDMQ_zzz : KNC_I<0x64, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpblendmq">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPBLENDMQ_zzm : KNC_I<0x64, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpblendmq">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPBROADCASTD_zm : KNC_I<0x58, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vpbroadcastd">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPBROADCASTQ_zm : KNC_I<0x59, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vpbroadcastq">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPCMPD_kzzi : KNC_Ii8<0x1F, MRMSrcReg, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, u8imm:$op3, mvex_sss:$sss), "vpcmpd">, EVEX, TA, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPCMPD_kzmi : KNC_Ii8<0x1F, MRMSrcMem, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, u8imm:$op3, mvex_sss:$sss), "vpcmpd">, EVEX, TA, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPCMPEQD_kzz : KNC_I<0x76, MRMSrcReg, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpcmpeqd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPCMPEQD_kzm : KNC_I<0x76, MRMSrcMem, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpcmpeqd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPCMPGTD_kzz : KNC_I<0x66, MRMSrcReg, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpcmpgtd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPCMPGTD_kzm : KNC_I<0x66, MRMSrcMem, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpcmpgtd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPCMPLTD_kzz : KNC_I<0x74, MRMSrcReg, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpcmpltd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPCMPLTD_kzm : KNC_I<0x74, MRMSrcMem, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpcmpltd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPCMPUD_kzzi : KNC_Ii8<0x1E, MRMSrcReg, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, u8imm:$op3, mvex_sss:$sss), "vpcmpud">, EVEX, TA, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPCMPUD_kzmi : KNC_Ii8<0x1E, MRMSrcMem, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, u8imm:$op3, mvex_sss:$sss), "vpcmpud">, EVEX, TA, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPERMD_zzz : KNC_I<0x36, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2), "vpermd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPERMD_zzm : KNC_I<0x36, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpermd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPERMF32X4_zzi : KNC_Ii8<0x07, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2), "vpermf32x4">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPERMF32X4_zmi : KNC_Ii8<0x07, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vpermf32x4">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPGATHERDD_zv : KNC_I<0x90, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, vz32mem:$op1, mvex_sss:$sss), "vpgatherdd">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPGATHERDQ_zv : KNC_I<0x90, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, vz32mem:$op1, mvex_sss:$sss), "vpgatherdq">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMADD231D_zzz : KNC_I<0xB5, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpmadd231d">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMADD231D_zzm : KNC_I<0xB5, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpmadd231d">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMADD233D_zzz : KNC_I<0xB4, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpmadd233d">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMADD233D_zzm : KNC_I<0xB4, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpmadd233d">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMAXSD_zzz : KNC_I<0x3D, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpmaxsd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMAXSD_zzm : KNC_I<0x3D, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpmaxsd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMAXUD_zzz : KNC_I<0x3F, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpmaxud">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMAXUD_zzm : KNC_I<0x3F, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpmaxud">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMINSD_zzz : KNC_I<0x39, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpminsd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMINSD_zzm : KNC_I<0x39, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpminsd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMINUD_zzz : KNC_I<0x3B, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpminud">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMINUD_zzm : KNC_I<0x3B, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpminud">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMULHD_zzz : KNC_I<0x87, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpmulhd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMULHD_zzm : KNC_I<0x87, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpmulhd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMULHUD_zzz : KNC_I<0x86, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpmulhud">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMULHUD_zzm : KNC_I<0x86, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpmulhud">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPMULLD_zzz : KNC_I<0x40, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpmulld">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPMULLD_zzm : KNC_I<0x40, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpmulld">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPORD_zzz : KNC_I<0xEB, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpord">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPORD_zzm : KNC_I<0xEB, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpord">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPORQ_zzz : KNC_I<0xEB, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vporq">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPORQ_zzm : KNC_I<0xEB, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vporq">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSBBD_zkz : KNC_I<0x5E, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, VR512:$op2, mvex_sss:$sss), "vpsbbd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSBBD_zkm : KNC_I<0x5E, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, i512mem:$op2, mvex_sss:$sss), "vpsbbd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSBBRD_zkz : KNC_I<0x6E, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, VR512:$op2, mvex_sss:$sss), "vpsbbrd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSBBRD_zkm : KNC_I<0x6E, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, i512mem:$op2, mvex_sss:$sss), "vpsbbrd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPSCATTERDD_vz : KNC_I<0xA0, MRMDestMem, (outs), (ins vz32mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpscatterdd">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VPSCATTERDQ_vz : KNC_I<0xA0, MRMDestMem, (outs), (ins vz32mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vpscatterdq">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSHUFD_zzi : KNC_Ii8<0x70, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2), "vpshufd">, EVEX, TB, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSHUFD_zmi : KNC_Ii8<0x70, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vpshufd">, EVEX, TB, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSLLD_zzi : KNC_Ii8<0x72, MRM6r, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vpslld">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSLLD_zmi : KNC_Ii8<0x72, MRM6m, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vpslld">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSLLVD_zzz : KNC_I<0x47, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpsllvd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSLLVD_zzm : KNC_I<0x47, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpsllvd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSRAD_zzi : KNC_Ii8<0x72, MRM4r, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vpsrad">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSRAD_zmi : KNC_Ii8<0x72, MRM4m, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vpsrad">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSRAVD_zzz : KNC_I<0x46, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpsravd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSRAVD_zzm : KNC_I<0x46, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpsravd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSRLD_zzi : KNC_Ii8<0x72, MRM2r, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vpsrld">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSRLD_zmi : KNC_Ii8<0x72, MRM2m, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vpsrld">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSRLVD_zzz : KNC_I<0x45, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpsrlvd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSRLVD_zzm : KNC_I<0x45, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpsrlvd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSUBD_zzz : KNC_I<0xFA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpsubd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSUBD_zzm : KNC_I<0xFA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpsubd">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSUBRD_zzz : KNC_I<0x6C, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpsubrd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSUBRD_zzm : KNC_I<0x6C, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpsubrd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSUBRSETBD_zkz : KNC_I<0x6F, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, VR512:$op2, mvex_sss:$sss), "vpsubrsetbd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSUBRSETBD_zkm : KNC_I<0x6F, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, i512mem:$op2, mvex_sss:$sss), "vpsubrsetbd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPSUBSETBD_zkz : KNC_I<0x5F, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, VR512:$op2, mvex_sss:$sss), "vpsubsetbd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPSUBSETBD_zkm : KNC_I<0x5F, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VK16:$op1, i512mem:$op2, mvex_sss:$sss), "vpsubsetbd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPTESTMD_kzz : KNC_I<0x27, MRMSrcReg, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vptestmd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPTESTMD_kzm : KNC_I<0x27, MRMSrcMem, (outs VK16:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vptestmd">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPXORD_zzz : KNC_I<0xEF, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpxord">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPXORD_zzm : KNC_I<0xEF, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpxord">, EVEX, TB, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VPXORQ_zzz : KNC_I<0xEF, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vpxorq">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPXORQ_zzm : KNC_I<0xEF, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vpxorq">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VRCP23PS_zz : KNC_I<0xCA, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vrcp23ps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VRCP23PS_zm : KNC_I<0xCA, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vrcp23ps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VRNDFXPNTPD_zzi : KNC_Ii8<0x52, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vrndfxpntpd">, EVEX, TA, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VRNDFXPNTPD_zmi : KNC_Ii8<0x52, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vrndfxpntpd">, EVEX, TA, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VRNDFXPNTPS_zzi : KNC_Ii8<0x52, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, u8imm:$op2, mvex_sss:$sss), "vrndfxpntps">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VRNDFXPNTPS_zmi : KNC_Ii8<0x52, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, u8imm:$op2, mvex_sss:$sss), "vrndfxpntps">, EVEX, TA, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VRSQRT23PS_zz : KNC_I<0xCB, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, mvex_sss:$sss), "vrsqrt23ps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VRSQRT23PS_zm : KNC_I<0xCB, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, i512mem:$op1, mvex_sss:$sss), "vrsqrt23ps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VSCALEPS_zzz : KNC_I<0x84, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vscaleps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSCALEPS_zzm : KNC_I<0x84, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vscaleps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VSCATTERDPD_vz : KNC_I<0xA2, MRMDestMem, (outs), (ins vz32mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vscatterdpd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayStore = 1, isMVEX = 1 in
++def KNC_VSCATTERDPS_vz : KNC_I<0xA2, MRMDestMem, (outs), (ins vz32mem:$op0, VK16:$mask, VR512:$op1, mvex_sss:$sss), "vscatterdps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSCATTERPF0DPS_v : KNC_I<0xC6, MRM5m, (outs), (ins VK16:$mask, vz32mem:$op0, mvex_sss:$sss), "vscatterpf0dps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSCATTERPF0HINTDPD_v : KNC_I<0xC6, MRM4m, (outs), (ins VK16:$mask, vz32mem:$op0, mvex_sss:$sss), "vscatterpf0hintdpd">, EVEX, T8, PD, EVEX_K, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSCATTERPF0HINTDPS_v : KNC_I<0xC6, MRM4m, (outs), (ins VK16:$mask, vz32mem:$op0, mvex_sss:$sss), "vscatterpf0hintdps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSCATTERPF1DPS_v : KNC_I<0xC6, MRM6m, (outs), (ins VK16:$mask, vz32mem:$op0, mvex_sss:$sss), "vscatterpf1dps">, EVEX, T8, PD, EVEX_K;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VSUBPD_zzz : KNC_I<0x5C, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vsubpd">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSUBPD_zzm : KNC_I<0x5C, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vsubpd">, EVEX, TB, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VSUBPS_zzz : KNC_I<0x5C, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vsubps">, EVEX, TB, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSUBPS_zzm : KNC_I<0x5C, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vsubps">, EVEX, TB, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VSUBRPD_zzz : KNC_I<0x6D, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vsubrpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSUBRPD_zzm : KNC_I<0x6D, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vsubrpd">, EVEX, T8, PD, EVEX_K, VVVV, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], isMVEX = 1 in
++def KNC_VSUBRPS_zzz : KNC_I<0x6D, MRMSrcReg, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, VR512:$op2, mvex_sss:$sss), "vsubrps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VSUBRPS_zzm : KNC_I<0x6D, MRMSrcMem, (outs VR512:$op0), (ins VK16:$mask, VR512:$op1, i512mem:$op2, mvex_sss:$sss), "vsubrps">, EVEX, T8, PD, EVEX_K, VVVV;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_CLEVICT0_m : KNC_I<0xAE, MRM7m, (outs), (ins i8mem:$op0), "clevict0">, VEX, TB, XD, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_CLEVICT0_m_MVEX : KNC_I<0xAE, MRM7m, (outs), (ins i8mem:$op0), "clevict0">, EVEX, TB, XD, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_CLEVICT1_m : KNC_I<0xAE, MRM7m, (outs), (ins i8mem:$op0), "clevict1">, VEX, TB, XS, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_CLEVICT1_m_MVEX : KNC_I<0xAE, MRM7m, (outs), (ins i8mem:$op0), "clevict1">, EVEX, TB, XS, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ] in
++def KNC_DELAY_r : KNC_I<0xAE, MRM6r, (outs), (ins GR32:$op0), "delay">, VEX, TB, XS;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ] in
++def KNC_DELAY_q : KNC_I<0xAE, MRM6r, (outs), (ins GR64:$op0), "delay">, VEX, TB, XS, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_LZCNT_rr : KNC_I<0xBD, MRMSrcReg, (outs GR32:$op0), (ins GR32:$op1), "lzcnt">, VEX, TB, XS;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_LZCNT_qq : KNC_I<0xBD, MRMSrcReg, (outs GR64:$op0), (ins GR64:$op1), "lzcnt">, VEX, TB, XS, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_POPCNT_rr : KNC_I<0xB8, MRMSrcReg, (outs GR32:$op0), (ins GR32:$op1), "popcnt">, VEX, TB, XS;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_POPCNT_qq : KNC_I<0xB8, MRMSrcReg, (outs GR64:$op0), (ins GR64:$op1), "popcnt">, VEX, TB, XS, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ] in
++def KNC_SPFLT_r : KNC_I<0xAE, MRM6r, (outs), (ins GR32:$op0), "spflt">, VEX, TB, XD;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ] in
++def KNC_SPFLT_q : KNC_I<0xAE, MRM6r, (outs), (ins GR64:$op0), "spflt">, VEX, TB, XD, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_TZCNT_rr : KNC_I<0xBC, MRMSrcReg, (outs GR32:$op0), (ins GR32:$op1), "tzcnt">, VEX, TB, XS;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_TZCNT_qq : KNC_I<0xBC, MRMSrcReg, (outs GR64:$op0), (ins GR64:$op1), "tzcnt">, VEX, TB, XS, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_TZCNTI_rr : KNC_I<0xBC, MRMSrcReg, (outs GR32:$op0), (ins GR32:$op1), "tzcnti">, VEX, TB, XD;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 0, SchedRW = [WriteFAddZ], Defs = [EFLAGS] in
++def KNC_TZCNTI_qq : KNC_I<0xBC, MRMSrcReg, (outs GR64:$op0), (ins GR64:$op1), "tzcnti">, VEX, TB, XD, REX_W;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_VPREFETCH0_m : KNC_I<0x18, MRM1m, (outs), (ins i8mem:$op0), "vprefetch0">, VEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPREFETCH0_m_MVEX : KNC_I<0x18, MRM1m, (outs), (ins i8mem:$op0), "vprefetch0">, EVEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_VPREFETCH1_m : KNC_I<0x18, MRM2m, (outs), (ins i8mem:$op0), "vprefetch1">, VEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPREFETCH1_m_MVEX : KNC_I<0x18, MRM2m, (outs), (ins i8mem:$op0), "vprefetch1">, EVEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_VPREFETCH2_m : KNC_I<0x18, MRM3m, (outs), (ins i8mem:$op0), "vprefetch2">, VEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPREFETCH2_m_MVEX : KNC_I<0x18, MRM3m, (outs), (ins i8mem:$op0), "vprefetch2">, EVEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_VPREFETCHE0_m : KNC_I<0x18, MRM5m, (outs), (ins i8mem:$op0), "vprefetche0">, VEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPREFETCHE0_m_MVEX : KNC_I<0x18, MRM5m, (outs), (ins i8mem:$op0), "vprefetche0">, EVEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_VPREFETCHE1_m : KNC_I<0x18, MRM6m, (outs), (ins i8mem:$op0), "vprefetche1">, VEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPREFETCHE1_m_MVEX : KNC_I<0x18, MRM6m, (outs), (ins i8mem:$op0), "vprefetche1">, EVEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_VPREFETCHE2_m : KNC_I<0x18, MRM7m, (outs), (ins i8mem:$op0), "vprefetche2">, VEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPREFETCHE2_m_MVEX : KNC_I<0x18, MRM7m, (outs), (ins i8mem:$op0), "vprefetche2">, EVEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_VPREFETCHENTA_m : KNC_I<0x18, MRM4m, (outs), (ins i8mem:$op0), "vprefetchenta">, VEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPREFETCHENTA_m_MVEX : KNC_I<0x18, MRM4m, (outs), (ins i8mem:$op0), "vprefetchenta">, EVEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1 in
++def KNC_VPREFETCHNTA_m : KNC_I<0x18, MRM0m, (outs), (ins i8mem:$op0), "vprefetchnta">, VEX, TB, WIG;
++let Predicates = [HasKNC], isCodeGenOnly = 1, hasSideEffects = 1, SchedRW = [WriteFAddZ], mayLoad = 1, isMVEX = 1 in
++def KNC_VPREFETCHNTA_m_MVEX : KNC_I<0x18, MRM0m, (outs), (ins i8mem:$op0), "vprefetchnta">, EVEX, TB, WIG;
+diff --git a/llvm/lib/Target/X86/X86InstrPredicates.td b/llvm/lib/Target/X86/X86InstrPredicates.td
+index 5a9ee0f95..c0f4c4b53 100644
+--- a/llvm/lib/Target/X86/X86InstrPredicates.td
++++ b/llvm/lib/Target/X86/X86InstrPredicates.td
+@@ -79,6 +79,7 @@ def HasAVX10_1   : Predicate<"Subtarget->hasAVX10_1()">;
+ def HasAVX10_2   : Predicate<"Subtarget->hasAVX10_2()">;
+ def NoAVX10_2    : Predicate<"!Subtarget->hasAVX10_2()">;
+ def HasAVX512    : Predicate<"Subtarget->hasAVX512()">;
++def HasKNC       : Predicate<"Subtarget->hasKNC()">;
+ def UseAVX       : Predicate<"Subtarget->hasAVX() && !Subtarget->hasAVX512()">;
+ def UseAVX2      : Predicate<"Subtarget->hasAVX2() && !Subtarget->hasAVX512()">;
+ def NoAVX512     : Predicate<"!Subtarget->hasAVX512()">;
+diff --git a/llvm/utils/TableGen/X86FoldTablesEmitter.cpp b/llvm/utils/TableGen/X86FoldTablesEmitter.cpp
+index a909d4f03..72c21c2bd 100644
+--- a/llvm/utils/TableGen/X86FoldTablesEmitter.cpp
++++ b/llvm/utils/TableGen/X86FoldTablesEmitter.cpp
+@@ -673,7 +673,8 @@ void X86FoldTablesEmitter::run(raw_ostream &OS) {
+ 
+   for (const CodeGenInstruction *Inst : NumberedInstructions) {
+     const Record *Rec = Inst->TheDef;
+-    if (!Rec->isSubClassOf("X86Inst") || Rec->getValueAsBit("isAsmParserOnly"))
++    if (!Rec->isSubClassOf("X86Inst") || Rec->getValueAsBit("isAsmParserOnly") ||
++        Rec->isSubClassOf("KNCEnc")) // Knights Corner: no fold pairs
+       continue;
+ 
+     if (NoFoldSet.find(Rec->getName()) != NoFoldSet.end())
+diff --git a/llvm/utils/TableGen/X86InstrMappingEmitter.cpp b/llvm/utils/TableGen/X86InstrMappingEmitter.cpp
+index bde979d09..077305bb3 100644
+--- a/llvm/utils/TableGen/X86InstrMappingEmitter.cpp
++++ b/llvm/utils/TableGen/X86InstrMappingEmitter.cpp
+@@ -154,7 +154,10 @@ static bool isInteresting(const Record *Rec) {
+   // _REV instruction should not appear before encoding optimization
+   return Rec->isSubClassOf("X86Inst") &&
+          !Rec->getValueAsBit("isAsmParserOnly") &&
+-         !Rec->getName().ends_with("_REV");
++         !Rec->getName().ends_with("_REV") &&
++         // Knights Corner forms share opcodes with VEX/EVEX ones but are
++         // other instructions; never pair them.
++         !Rec->isSubClassOf("KNCEnc");
+ }
+ 
+ void X86InstrMappingEmitter::emitCompressEVEXTable(

@@ -11,6 +11,7 @@ beyond its directory, and compiled programs weaker than they need to be.
 | `llvm-project` | tag and peeled commit in `patches/SERIES` | `scripts/build.sh` `verify`, after every fetch and before every patch run. A mismatch stops the build. |
 | MPSS sources (oracle) | SHA-256 of the outer tar and of the inner binutils tarball, in `oracle/SHA256SUMS` | `oracle/build-binutils.sh`, before extraction |
 | Patches | git history of this repository | `git apply` onto the pristine verified tree; a patch that does not apply exactly stops the build |
+| Intel ISA reference 327364-001 (the instruction table) | SHA-256 in `scripts/isa-extract.sh` | before `pdftotext` reads it; the extraction is committed (`isa/knc-isa.txt`) and the generated table files are checked against it by `make check` |
 
 Two steps use the network:
 

@@ -12,3 +12,6 @@
 0010-clang-x86-64-sse-class-returns-past-two-x87-registers-in-memory.patch
 0011-x86-knc-cpu-and-feature-without-sse.patch
 0012-clang-x86-knc-march-without-sse2-and-mic-macros.patch
+0013-x86-knc-mvex-instruction-table-and-encoder.patch
+0014-x86-knc-assembler-and-instruction-printers.patch
+0015-x86-knc-disassembler.patch
