@@ -1,7 +1,6 @@
 # 0001: The KNC vector ISA becomes a feature and CPU of the stack's LLVM
 
-Status: proposed, 2026-10-15. Three choices inside it (D1 to D3 below)
-are open and belong to the user.
+Status: accepted 2026-10-15 for D1 and D2 (below); D3 open.
 
 ## Context
 
@@ -64,3 +63,29 @@ are open and belong to the user.
 - **MPSS gcc 5.1.1:** it has no KNC vector codegen.
 - **Keep `.byte` generation only:** no intrinsics, no inline asm with
   register allocation, no vectorizer.
+
+## Choices made (2026-10-15)
+
+The person: "the knc-mvex would be the only objectively correct option for
+keeping a wrapper around those instructions, and keep the distro LLVM, so
+my software stack can remain compatible with Arch Linux and Arch
+Linux-Like".
+
+- **D2: (a).** `knc-mvex` stays the one sanctioned MVEX encoder, the
+  wrapper around the instructions for the whole family. LLVM's MVEX
+  encoder (S2) is a second producer of the same bytes, held to it:
+  - S2's gate compares `llvm-mc` with both MPSS gas and
+    `knc-mvex-gen vectors`;
+  - Intel-Phi-AVX512's `make mvex-check` keeps knc-mvex as the reference.
+- **D1: (a).** The series follows the LLVM version Arch ships in
+  `llvm-libs`, and the distro rustc loads the patched dylib
+  (Intel-Phi-3120A ADR 0007). No rustc fork.
+  - Consequences: Rust reaches MVEX through `global_asm!`, `extern "C"`
+    or knc-mvex output (rustc's `zmm_reg`/`kreg` classes stay gated on
+    `avx512f`), and every Arch LLVM bump means a rebase.
+  - `scripts/check-distro.sh` reports when `llvm-libs` and the pinned tag
+    differ.
+  - A patched LLVM is still required: Arch's unmodified `libLLVM` has no
+    KNC. "Distro LLVM" means the same version, so the distro rustc and
+    clang setups stay usable.
+- **D3:** open.

@@ -13,6 +13,9 @@ case "$VARIANT" in
     clang) BUILD="$llvm_build/build-clang"; PREFIX="$llvm_build/llvm" ;;
     dylib) BUILD="$llvm_build/build-dylib"; PREFIX="$llvm_build/llvm-dylib" ;;
     card)  BUILD="$llvm_build/build-card";  PREFIX="$llvm_build/llvm-card"
+           # knc-cc compiles with this repository's clang against the sysroot
+           # scripts/runtimes.sh produced (libc++ of the same LLVM version).
+           export PHI_LLVM="$llvm_build/llvm" PHI_SYSROOT="$llvm_build/sysroot"
            HOST_BUILD="$llvm_build/build-clang" ;;
     *) echo "build.sh: unknown PHI_LLVM_VARIANT $VARIANT" >&2; exit 2 ;;
 esac
@@ -77,7 +80,7 @@ configure() {
     case "$VARIANT" in
     card)
         [ -x "$HOST_BUILD/bin/llvm-tblgen" ] || { echo "card variant needs the clang variant built first (tablegen)" >&2; exit 1; }
-        [ -f "$PHI_SYSROOT/usr/lib/libc++.a" ] || { echo "card variant needs libc++ in $PHI_SYSROOT (Intel-Phi-3120A toolchain/libcxx/build.sh)" >&2; exit 1; }
+        [ -f "$PHI_SYSROOT/usr/lib/libc++.a" ] || { echo "card variant needs libc++ in $PHI_SYSROOT (scripts/runtimes.sh)" >&2; exit 1; }
         cmake -S "$SRC/llvm" -B "$BUILD" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=x86_64 \

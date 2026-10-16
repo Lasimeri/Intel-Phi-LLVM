@@ -1,8 +1,8 @@
 diff --git a/clang/lib/CodeGen/Targets/X86.cpp b/clang/lib/CodeGen/Targets/X86.cpp
-index e6203db8b..6fb161fad 100644
+index 807d372c3..7c2ed3671 100644
 --- a/clang/lib/CodeGen/Targets/X86.cpp
 +++ b/clang/lib/CodeGen/Targets/X86.cpp
-@@ -3069,6 +3069,14 @@ RValue X86_64ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+@@ -3167,6 +3167,14 @@ RValue X86_64ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
    if (AI.isIgnore())
      return Slot.asRValue();
  

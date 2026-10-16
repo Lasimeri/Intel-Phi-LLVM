@@ -1,8 +1,8 @@
 diff --git a/compiler-rt/lib/builtins/CMakeLists.txt b/compiler-rt/lib/builtins/CMakeLists.txt
-index c3dbd6599..88aa674e9 100644
+index e128fea6a..c47aa7660 100644
 --- a/compiler-rt/lib/builtins/CMakeLists.txt
 +++ b/compiler-rt/lib/builtins/CMakeLists.txt
-@@ -292,6 +292,14 @@ set(x86_ARCH_SOURCES
+@@ -329,6 +329,14 @@ set(x86_ARCH_SOURCES
    cpu_model/x86.c
    )
  
@@ -17,7 +17,7 @@ index c3dbd6599..88aa674e9 100644
  if (NOT MSVC)
    set(x86_ARCH_SOURCES
      ${x86_ARCH_SOURCES}
-@@ -350,6 +358,10 @@ if (NOT MSVC)
+@@ -390,6 +398,10 @@ if (NOT MSVC)
      endif()
    endif()
  

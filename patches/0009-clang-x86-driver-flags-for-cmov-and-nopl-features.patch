@@ -1,8 +1,8 @@
 diff --git a/clang/include/clang/Options/Options.td b/clang/include/clang/Options/Options.td
-index b2b8dc5d4..3001a75be 100644
+index f893d858d..a48e10a59 100644
 --- a/clang/include/clang/Options/Options.td
 +++ b/clang/include/clang/Options/Options.td
-@@ -6931,6 +6931,13 @@ def mlzcnt : Flag<["-"], "mlzcnt">, Group<m_x86_Features_Group>;
+@@ -7323,6 +7323,13 @@ def mlzcnt : Flag<["-"], "mlzcnt">, Group<m_x86_Features_Group>;
  def mno_lzcnt : Flag<["-"], "mno-lzcnt">, Group<m_x86_Features_Group>;
  def mmovbe : Flag<["-"], "mmovbe">, Group<m_x86_Features_Group>;
  def mno_movbe : Flag<["-"], "mno-movbe">, Group<m_x86_Features_Group>;

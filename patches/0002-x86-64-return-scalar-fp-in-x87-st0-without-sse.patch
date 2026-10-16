@@ -1,5 +1,5 @@
 diff --git a/llvm/lib/Target/X86/X86CallingConv.td b/llvm/lib/Target/X86/X86CallingConv.td
-index f020e0b55..c67534dd0 100644
+index bde5f81ea..7aa59ecf0 100644
 --- a/llvm/lib/Target/X86/X86CallingConv.td
 +++ b/llvm/lib/Target/X86/X86CallingConv.td
 @@ -364,6 +364,15 @@ def RetCC_X86_32_VectorCall : CallingConv<[

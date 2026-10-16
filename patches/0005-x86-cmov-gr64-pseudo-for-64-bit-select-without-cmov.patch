@@ -1,8 +1,8 @@
 diff --git a/llvm/lib/Target/X86/X86ISelLowering.cpp b/llvm/lib/Target/X86/X86ISelLowering.cpp
-index 8dfd800a1..ed245bf1f 100644
+index 9804cd78a..070456bdf 100644
 --- a/llvm/lib/Target/X86/X86ISelLowering.cpp
 +++ b/llvm/lib/Target/X86/X86ISelLowering.cpp
-@@ -36430,6 +36430,7 @@ static bool isCMOVPseudo(MachineInstr &MI) {
+@@ -36959,6 +36959,7 @@ static bool isCMOVPseudo(MachineInstr &MI) {
    case X86::CMOV_GR8:
    case X86::CMOV_GR16:
    case X86::CMOV_GR32:
@@ -10,7 +10,7 @@ index 8dfd800a1..ed245bf1f 100644
    case X86::CMOV_RFP32:
    case X86::CMOV_RFP64:
    case X86::CMOV_RFP80:
-@@ -38099,6 +38100,7 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
+@@ -38626,6 +38627,7 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
    case X86::CMOV_GR8:
    case X86::CMOV_GR16:
    case X86::CMOV_GR32:
@@ -19,10 +19,10 @@ index 8dfd800a1..ed245bf1f 100644
    case X86::CMOV_RFP64:
    case X86::CMOV_RFP80:
 diff --git a/llvm/lib/Target/X86/X86InstrCompiler.td b/llvm/lib/Target/X86/X86InstrCompiler.td
-index d3acfc86a..f1f133aa5 100644
+index d3e8fdbdc..763a00481 100644
 --- a/llvm/lib/Target/X86/X86InstrCompiler.td
 +++ b/llvm/lib/Target/X86/X86InstrCompiler.td
-@@ -582,6 +582,9 @@ let usesCustomInserter = 1, hasNoSchedulingInfo = 1, Uses = [EFLAGS] in {
+@@ -593,6 +593,9 @@ let usesCustomInserter = 1, hasNoSchedulingInfo = 1, Uses = [EFLAGS] in {
    let Predicates = [NoCMOV] in {
      defm _GR32 : CMOVrr_PSEUDO<GR32, i32>;
      defm _GR16 : CMOVrr_PSEUDO<GR16, i16>;

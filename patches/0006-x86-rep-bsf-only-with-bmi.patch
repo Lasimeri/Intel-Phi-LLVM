@@ -1,8 +1,8 @@
 diff --git a/llvm/lib/Target/X86/X86MCInstLower.cpp b/llvm/lib/Target/X86/X86MCInstLower.cpp
-index 1dd702069..d45771d1e 100644
+index ad0946b4c..e7a18c9d4 100644
 --- a/llvm/lib/Target/X86/X86MCInstLower.cpp
 +++ b/llvm/lib/Target/X86/X86MCInstLower.cpp
-@@ -516,9 +516,13 @@ void X86MCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
+@@ -523,9 +523,13 @@ void X86MCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
      // recognize as TZCNT, which has better performance than BSF.
      // BSF and TZCNT have different interpretations on ZF bit. So make sure
      // it won't be used later.

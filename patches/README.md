@@ -1,11 +1,14 @@
 # patches
 
-Ten patches against `llvmorg-22.1.8` (commit `ca7933e4` in `SERIES`),
-applied by `scripts/build.sh` before it configures (imported unchanged from Intel-Phi-3120A `toolchain/llvm/patches` at cce74b6). Named
-`NNNN-<summary>.patch`, generated with `git format-patch`, each carrying
-the Apache-2.0-with-LLVM-exception license of the code it modifies.
+Ten patches against `llvmorg-23.1.1` (commit `6dfe1677` in `SERIES`), the LLVM
+Arch ships in `llvm-libs` (decision D1), applied by `scripts/build.sh` before it
+configures. Imported from Intel-Phi-3120A `toolchain/llvm/patches` at cce74b6
+(against 22.1.8) and rebased 2026-10-15: every hunk applied unchanged, only
+line offsets and index lines moved. Named `NNNN-<summary>.patch`; each is a
+plain `git diff` of one step (not `git format-patch` mail), carrying the
+Apache-2.0-with-LLVM-exception license of the code it modifies.
 
-`toolchain/llvm/README.md` explains what each one does and why. In short:
+Intel-Phi-3120A's `toolchain/llvm/README.md` explains what each one does and why. In short:
 0001, 0005 and 0009 remove the assumption that x86-64 implies CMOV; 0002
 and 0004 are the knc64-x87 ABI (scalar floats returned in `ST0`, `va_arg`
 taking the SSE class from the overflow area); 0003 and 0009 make `-nopl`

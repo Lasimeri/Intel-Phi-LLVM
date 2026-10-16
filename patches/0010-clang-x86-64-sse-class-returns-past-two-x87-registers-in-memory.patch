@@ -1,7 +1,8 @@
 diff --git a/clang/lib/CodeGen/Targets/X86.cpp b/clang/lib/CodeGen/Targets/X86.cpp
+index 7c2ed3671..026698c97 100644
 --- a/clang/lib/CodeGen/Targets/X86.cpp
 +++ b/clang/lib/CodeGen/Targets/X86.cpp
-@@ -2605,6 +2605,29 @@
+@@ -2672,6 +2672,29 @@ ABIArgInfo X86_64ABIInfo::classifyReturnType(QualType RetTy) const {
    assert((Hi != Memory || Lo == Memory) && "Invalid memory classification.");
    assert((Hi != SSEUp || Lo == SSE) && "Invalid SSEUp classification.");
  

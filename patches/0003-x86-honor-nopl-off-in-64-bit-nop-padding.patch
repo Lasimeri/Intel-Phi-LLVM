@@ -1,8 +1,8 @@
 diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86AsmBackend.cpp b/llvm/lib/Target/X86/MCTargetDesc/X86AsmBackend.cpp
-index 0a98331da..80ea5c7aa 100644
+index 0b3da6582..dc64ec729 100644
 --- a/llvm/lib/Target/X86/MCTargetDesc/X86AsmBackend.cpp
 +++ b/llvm/lib/Target/X86/MCTargetDesc/X86AsmBackend.cpp
-@@ -949,7 +949,10 @@ bool X86AsmBackend::finishLayout() const {
+@@ -952,7 +952,10 @@ bool X86AsmBackend::finishLayout() const {
  unsigned X86AsmBackend::getMaximumNopSize(const MCSubtargetInfo &STI) const {
    if (STI.hasFeature(X86::Is16Bit))
      return 4;

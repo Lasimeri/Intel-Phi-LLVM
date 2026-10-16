@@ -1,8 +1,8 @@
 diff --git a/llvm/lib/Target/X86/X86Subtarget.h b/llvm/lib/Target/X86/X86Subtarget.h
-index 3b920bc4e..daa0965f9 100644
+index 6cfea5645..bc580bfd2 100644
 --- a/llvm/lib/Target/X86/X86Subtarget.h
 +++ b/llvm/lib/Target/X86/X86Subtarget.h
-@@ -185,7 +185,10 @@ public:
+@@ -196,7 +196,10 @@ public:
    }
    // SSE codegen depends on cmovs, and all SSE1+ processors support them.
    // All 64-bit processors support cmov.
