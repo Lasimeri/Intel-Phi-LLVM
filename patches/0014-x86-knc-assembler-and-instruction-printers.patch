@@ -1,5 +1,5 @@
 diff --git a/llvm/lib/Target/X86/AsmParser/X86AsmParser.cpp b/llvm/lib/Target/X86/AsmParser/X86AsmParser.cpp
-index 54edcba34..35f0f4c67 100644
+index 54edcba34..daf5075a6 100644
 --- a/llvm/lib/Target/X86/AsmParser/X86AsmParser.cpp
 +++ b/llvm/lib/Target/X86/AsmParser/X86AsmParser.cpp
 @@ -9,6 +9,7 @@
@@ -25,7 +25,7 @@ index 54edcba34..35f0f4c67 100644
    bool ParseIntelNamedOperator(StringRef Name, IntelExprStateMachine &SM,
                                 bool &ParseError, SMLoc &End);
    bool ParseMasmNamedOperator(StringRef Name, IntelExprStateMachine &SM,
-@@ -3051,6 +3060,300 @@ bool X86AsmParser::HandleAVX512Operand(OperandVector &Operands) {
+@@ -3051,6 +3060,304 @@ bool X86AsmParser::HandleAVX512Operand(OperandVector &Operands) {
    return false;
  }
  
@@ -202,12 +202,16 @@ index 54edcba34..35f0f4c67 100644
 +        if (!(D.Flags & X86KNC::F_MASK))
 +          return false;
 +        Mask = K.Mask;
++      } else if (D.Flags & X86KNC::F_MASKREQ) {
++        return false; // gathers, scatters, vaddsetsps: no default mask
 +      }
 +      for (const std::string &T : K.Decos) {
 +        if (T == "{eh}") {
 +          // On memory the eviction hint; on the register source of a
-+          // load-op form MVEX.E = 1 as well (gas: %zmm3{eh}).
-+          bool RegSrc = !I.isMemForm() && (D.Flags & X86KNC::F_CONV);
++          // load-op form without rounding or SAE, MVEX.E = 1 as well (gas:
++          // %zmm3{eh}; gas refuses it where E = 1 means rounding or SAE).
++          bool RegSrc = !I.isMemForm() && (D.Flags & X86KNC::F_CONV) &&
++                        !I.Reg1Tab;
 +          if (!(D.Flags & X86KNC::F_EH) && !RegSrc)
 +            return false;
 +          if (I.EH != 2 || E)
@@ -326,7 +330,7 @@ index 54edcba34..35f0f4c67 100644
  /// Returns false if okay and true if there was an overflow.
  bool X86AsmParser::CheckDispOverflow(MCRegister BaseReg, MCRegister IndexReg,
                                       const MCExpr *Disp, SMLoc Loc) {
-@@ -3382,6 +3685,15 @@ bool X86AsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
+@@ -3382,6 +3689,15 @@ bool X86AsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
  
    StringRef PatchedName = Name;
  
@@ -342,7 +346,7 @@ index 54edcba34..35f0f4c67 100644
    // Hack to skip "short" following Jcc.
    if (isParsingIntelSyntax() &&
        (PatchedName == "jmp" || PatchedName == "jc" || PatchedName == "jnc" ||
-@@ -4244,6 +4556,22 @@ bool X86AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
+@@ -4244,6 +4560,22 @@ bool X86AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
    assert(!Operands.empty() && "Unexpect empty operand list!");
    assert((*Operands[0]).isToken() && "Leading operand should always be a mnemonic!");
  
@@ -365,7 +369,7 @@ index 54edcba34..35f0f4c67 100644
    // First, handle aliases that expand to multiple instructions.
    MatchFPUWaitAlias(IDLoc, static_cast<X86Operand &>(*Operands[0]), Operands,
                      Out, MatchingInlineAsm);
-@@ -4821,6 +5149,10 @@ bool X86AsmParser::ParseDirective(AsmToken DirectiveID) {
+@@ -4821,6 +5153,10 @@ bool X86AsmParser::ParseDirective(AsmToken DirectiveID) {
                                             "a '%' prefix in .intel_syntax");
      }
      return false;

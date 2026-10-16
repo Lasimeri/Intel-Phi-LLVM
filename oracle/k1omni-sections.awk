@@ -4,7 +4,8 @@
 # lines "file:LINE:COL: error: ...") and llvm-mc -show-encoding stdout.
 { file = FILENAME == ARGV[1] ? 1 : FILENAME == ARGV[2] ? 2 : FILENAME == ARGV[3] ? 3 : 4 }
 file == 1 {
-  if ($0 ~ /^[ \t]*#/) { sec = $0; sub(/^[ \t]*#[ \t]*/, "", sec); if (FNR > 3400) sec = "intel: " sec; next }
+  if ($0 ~ /^[ \t]*\.intel_syntax/) { intel = 1; next }
+  if ($0 ~ /^[ \t]*#/) { sec = $0; sub(/^[ \t]*#[ \t]*/, "", sec); if (intel) sec = "intel: " sec; next }
   if ($0 ~ /^[ \t]*$/ || $0 ~ /^[ \t]*\./ || $0 ~ /:[ \t]*$/) next
   n++; line[n] = FNR; secof[n] = sec; text[n] = $0
   if (!(sec in seen)) { seen[sec] = 1; order[++ns] = sec }

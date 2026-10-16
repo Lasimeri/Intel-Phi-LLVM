@@ -24,7 +24,7 @@ the card stack:
 | `config/knc.cfg` | `clang --config` defaults: `-march=knc` and the hardening verified on a card |
 | `scripts/march-check.sh`, `hardening-check.sh` | The S1 gate: `-march=knc` byte-identical to `knc-cc`, hardening defaults on a card |
 | `isa/`, `tools/knc-gen.c` | The KNC instruction table extracted from Intel's manual 327364 (`scripts/isa-extract.sh`) and its generator for patch 0013 (`scripts/check-knc-gen.sh`) |
-| `oracle/k1omni-check.sh`, `knc-mvex-check.sh`, `scripts/mc-regress.sh`, `mvex-card-check.sh`, `tests/` | The S2 gate: Intel's K1OM test byte for byte with round trips, the knc-mvex vectors, other x86 encodings unchanged, a self-checking MVEX probe on a card |
+| `oracle/k1omni-check.sh`, `knc-sweep.sh`, `knc-mvex-check.sh`, `scripts/mc-regress.sh`, `asm-regress.sh`, `mvex-card-check.sh`, `tests/` | The S2 gate: Intel's K1OM test byte for byte with round trips, every def swept through gas, the knc-mvex vectors, other x86 encodings and the runtime assembly unchanged, a self-checking MVEX probe on a card |
 | `oracle/` | Intel's MPSS binutils 2.22, built from checksummed sources and run as the MVEX encoding oracle (GPL, never copied) |
 | `docs/plan.md` | Stages S0 to S6 and their gates |
 | `docs/research/` | Prior art, measurements, constraints |

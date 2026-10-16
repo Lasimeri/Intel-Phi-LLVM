@@ -30,8 +30,8 @@ it) it runs the S2 gate on that build, all with `-mcpu=knc`:
    an unknown one fails.
 
 Measured 2026-10-16 on the series build: 6,708 of 6,708, 134 sections
-clean, both round trips identical (43,862 bytes), text 6,660 of 6,708
-with 36 + 8 + 4 in the three known classes. Exit status 1 on any failure.
+clean, both round trips identical (43,862 bytes), text 6,668 of 6,708
+with 36 + 4 in the known classes. Exit status 1 on any failure.
 
 Parsing note: the `.d` lines begin with the pattern `[ <TAB>]*`, so after
 splitting on tabs the bytes are field 3 and the text field 4. In objdump's

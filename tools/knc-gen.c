@@ -30,6 +30,7 @@ static const char *rname[] = {"R_NONE", "R_REG", "R_VVVV", "R_RM", "R_IMM"};
 #define F_CONV 2 /* carries the swizzle/conversion decoration */
 #define F_EH 4   /* accepts {eh} */
 #define F_HALF 8 /* register written as ymm: the low half (vcvtdq2pd and kin) */
+#define F_MASKREQ 16 /* the write mask must be written (gathers, scatters, vaddsetsps) */
 
 typedef struct { int kind, flags; char cls[8]; } Opd;
 typedef struct {
@@ -47,6 +48,8 @@ static Tab tabs[MAXT]; static int ntabs;
 static Deco decos[MAXD]; static int ndecos = 1; /* 0 = none */
 static Pseudo pseudos[MAXP]; static int npseudos;
 static char rounding_override[16][32]; static int nrounding;
+static char nosae_override[16][32]; static int nnosae;
+static char maskreq_override[16][32]; static int nmaskreq;
 
 static void die(const char *m, int line) { fprintf(stderr, "knc-gen: %s (isa line %d)\n", m, line); exit(1); }
 
@@ -263,6 +266,14 @@ static void build_def(const Row *r, int memform) {
 	}
 	d->mayload = is_mem(d->op[rm].kind) && d->form != 2;
 	d->maystore = d->form == 2;
+	/* gathers, scatters and their prefetches need a written mask (gas: "no
+	 * default mask"), and so do the maskreq overrides */
+	if (mask >= 0) {
+		int req = 0;
+		for (int i = 0; i < d->nops; i++) if (d->op[i].kind == K_VSIB) req = 1;
+		for (int k = 0; k < nmaskreq; k++) if (!strcmp(maskreq_override[k], d->mnem)) req = 1;
+		if (req) d->op[mask].flags |= F_MASKREQ;
+	}
 	/* MCInst order (X86MCCodeEmitter conventions):
 	 *   SrcReg/SrcMem: reg, [mask], [vvvv], rm, [imm], [sss]
 	 *   DestMem:       rm, [mask], reg, [imm], [sss]
@@ -306,6 +317,8 @@ static void build_def(const Row *r, int memform) {
 			d->reg1tab = t1 ? deco_from_tab(t1) : 0;
 			for (int k = 0; k < nrounding; k++)
 				if (!strcmp(rounding_override[k], d->mnem)) d->reg1tab = deco_full_rounding();
+			for (int k = 0; k < nnosae; k++)
+				if (!strcmp(nosae_override[k], d->mnem)) d->reg1tab = 0;
 			/* a load-op whose memory form reads half a vector (8 elements of
 			 * 32 bits) takes the low half of a register, written as ymm */
 			const Tab *tu = conv >= 0 ? find_tab(r->block, "up", cls) : 0;
@@ -444,6 +457,77 @@ static void emit_inc(FILE *f) {
 	fprintf(f, "};\n");
 }
 
+/* A sweep of every def in K1OM AT&T syntax, for oracle/knc-sweep.sh: per
+ * def a "# def NAME" line, then six lines rotating zmm 1 7 8 15 16 31 (and
+ * k1 to k7, eight general registers, seven memory and four VSIB forms)
+ * through the operand roles, then each decoration of the def's tables and
+ * {eh} once. Intel's gas assembles the same file, so every encoding field
+ * (R R' X B V' vvvv aaa, SIB, disp8*N) is compared in each role. */
+static void emit_sweep(FILE *f) {
+	static const int zmm[6] = {1, 7, 8, 15, 16, 31};
+	static const char *g32[8] = {"%eax", "%ecx", "%ebx", "%esp", "%r8d", "%r9d", "%r13d", "%r15d"};
+	static const char *g64[8] = {"%rax", "%rcx", "%rbx", "%rbp", "%r8", "%r9", "%r12", "%r15"};
+	static const char *mem[7] = {"(%rax)", "0x40(%rsp)", "-0x40(%rbp)", "0x1000(%r12)", "(%r13)", "0x7f(%r8,%rbx,4)", "-0x80(%r15,%r9,8)"};
+	static const char *vsib[4] = {"(%rax,%zmm0,4)", "0x40(%r13,%zmm16,8)", "-0x40(%rsp,%zmm31,1)", "(%r8,%zmm15,2)"};
+	for (int i = 0; i < ndefs; i++) {
+		Def *d = &defs[i];
+		fprintf(f, "# def %s\n", d->name);
+		int conv = -1;
+		for (int j = 0; j < d->nops; j++) if (d->op[j].flags & F_CONV) conv = j;
+		int tab = d->memtab ? d->memtab : d->reg0tab;
+		/* lines: 6 register rotations, then one per decoration, {eh}, rounding */
+		int nlines = 6, ndeco = 0, nround = 0;
+		const char *deco[16], *round[8];
+		if (conv >= 0 && tab)
+			for (int s = 1; s < 8; s++)
+				if (decos[tab].valid[s] && decos[tab].tok[s][0]) deco[ndeco++] = decos[tab].tok[s];
+		if (d->reg1tab)
+			for (int s = 0; s < 8; s++)
+				if (decos[d->reg1tab].valid[s] && (s == 0 || strcmp(decos[d->reg1tab].tok[s], decos[d->reg1tab].tok[s - 1])))
+					round[nround++] = decos[d->reg1tab].tok[s];
+		int eh = d->r->mvex && d->r->eh == 2 && d->misss >= 0 && (d->form == 1 || d->form == 2 || d->form == 4 || conv >= 0);
+		nlines += ndeco + nround + eh;
+		for (int l = 0; l < nlines; l++) {
+			int v = l < 6 ? l : 0;
+			const char *dtok = "", *rtok = "";
+			int use_eh = 0;
+			if (l >= 6 && l < 6 + ndeco) dtok = deco[l - 6];
+			else if (l >= 6 + ndeco && l < 6 + ndeco + nround) rtok = round[l - 6 - ndeco];
+			else if (l >= 6) use_eh = 1;
+			char ops[5][64];
+			for (int j = 0; j < d->nops; j++) {
+				const Opd *o = &d->op[j];
+				int slot = (v + 2 * d->role[j]) % 6;
+				char base[48];
+				switch (o->kind) {
+				case K_VR: snprintf(base, sizeof base, "%%%s%d", o->flags & F_HALF ? "ymm" : "zmm", zmm[slot]); break;
+				case K_KR: snprintf(base, sizeof base, "%%k%d", (v + d->role[j]) % 7 + 1); break;
+				case K_GR32: snprintf(base, sizeof base, "%s", g32[(v + 3 * d->role[j]) % 8]); break;
+				case K_GR64: snprintf(base, sizeof base, "%s", g64[(v + 3 * d->role[j]) % 8]); break;
+				case K_MEM: case K_M8: snprintf(base, sizeof base, "%s", mem[(v + l) % 7]); break;
+				case K_VSIB: snprintf(base, sizeof base, "%s", vsib[(v + l) % 4]); break;
+				default: snprintf(base, sizeof base, "$3"); break;
+				}
+				int k = snprintf(ops[j], sizeof ops[j], "%s", base);
+				if (j == conv && dtok[0]) k += snprintf(ops[j] + k, sizeof ops[j] - k, "%s", dtok);
+				if (use_eh) { /* on the memory operand, else on the register source */
+					int memform = d->form == 1 || d->form == 2 || d->form == 4;
+					if (memform ? (o->kind == K_MEM || o->kind == K_VSIB) : j == conv)
+						k += snprintf(ops[j] + k, sizeof ops[j] - k, "{eh}");
+				}
+				if ((o->flags & F_MASK) && d->mimask >= 0 && v % 3 != 2) snprintf(ops[j] + k, sizeof ops[j] - k, "{%%k%d}", v % 7 + 1);
+			}
+			fprintf(f, "\t%s\t", d->mnem);
+			/* gas takes static rounding after the immediate where the rounding is
+			 * full (vcvtfxpnt(u)dq2ps), before it where it is SAE only */
+			int late = rtok[0] && d->reg1tab && decos[d->reg1tab].valid[0] && d->op[d->nops - 1].kind == K_IMM;
+			if (late) { fprintf(f, "%s,%s,", ops[d->nops - 1], rtok); for (int j = d->nops - 2; j >= 0; j--) fprintf(f, "%s%s", ops[j], j ? "," : "\n"); continue; }
+			if (rtok[0]) fprintf(f, "%s,", rtok);
+			for (int j = d->nops - 1; j >= 0; j--) fprintf(f, "%s%s", ops[j], j ? "," : "\n");
+		}
+	}
+}
+
 static void emit_listing(FILE *f) {
 	for (int i = 0; i < ndefs; i++) {
 		Def *d = &defs[i]; const Row *r = d->r;
@@ -474,6 +558,8 @@ int main(int argc, char **argv) {
 		int n = sscanf(oline, "%31s %31s %31s %31s", a, b, c, e);
 		if (n <= 0) continue;
 		if (!strcmp(a, "rounding") && n == 2) snprintf(rounding_override[nrounding++], 32, "%s", b);
+		else if (!strcmp(a, "nosae") && n == 2) snprintf(nosae_override[nnosae++], 32, "%s", b);
+		else if (!strcmp(a, "maskreq") && n == 2) snprintf(maskreq_override[nmaskreq++], 32, "%s", b);
 		else if (!strcmp(a, "pseudo") && n == 4) {
 			snprintf(opseudo[nopseudo].pseudo, 32, "%s", b); snprintf(opseudo[nopseudo].base, 32, "%s", c);
 			opseudo[nopseudo++].imm = strcmp(e, "-") ? atoi(e) : -1;
@@ -532,6 +618,7 @@ int main(int argc, char **argv) {
 	emit_td(td); emit_inc(inc);
 	fclose(td); fclose(inc);
 	if (argc > 5) { FILE *l = fopen(argv[5], "w"); emit_listing(l); fclose(l); }
+	if (argc > 6) { FILE *s = fopen(argv[6], "w"); emit_sweep(s); fclose(s); }
 	fprintf(stderr, "knc-gen: %d rows, %d defs, %d decoration tables, %d pseudo-ops\n", nrows, ndefs, ndecos - 1, npseudos);
 	return 0;
 }

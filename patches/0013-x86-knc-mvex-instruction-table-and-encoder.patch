@@ -143,10 +143,10 @@ index 000000000..75688a661
 +}
 diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.h b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.h
 new file mode 100644
-index 000000000..604fe6793
+index 000000000..b99d3813f
 --- /dev/null
 +++ b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.h
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,130 @@
 +//===-- X86KNCInfo.h - Knights Corner instruction table ---------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -200,6 +200,7 @@ index 000000000..604fe6793
 +  F_CONV = 2, ///< carries the swizzle or conversion decoration
 +  F_EH = 4,   ///< accepts the {eh} eviction hint
 +  F_HALF = 8, ///< a register source read as its low half, written ymm
++  F_MASKREQ = 16, ///< the write mask must be written (gathers, scatters)
 +};
 +
 +struct OperandDesc {
@@ -278,7 +279,7 @@ index 000000000..604fe6793
 +#endif
 diff --git a/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.inc b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.inc
 new file mode 100644
-index 000000000..424a77cc1
+index 000000000..ffee2154d
 --- /dev/null
 +++ b/llvm/lib/Target/X86/MCTargetDesc/X86KNCInfo.inc
 @@ -0,0 +1,393 @@
@@ -355,8 +356,8 @@ index 000000000..424a77cc1
 +  {X86::KNC_VADDPD_zzm, "vaddpd", 1, 1, 1, 1, 0x58, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VADDPS_zzz, "vaddps", 1, 1, 0, 0, 0x58, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VADDPS_zzm, "vaddps", 1, 1, 0, 0, 0x58, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VADDSETSPS_zzz, "vaddsetsps", 1, 2, 1, 0, 0xCC, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VADDSETSPS_zzm, "vaddsetsps", 1, 2, 1, 0, 0xCC, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDSETSPS_zzz, "vaddsetsps", 1, 2, 1, 0, 0xCC, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 17}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VADDSETSPS_zzm, "vaddsetsps", 1, 2, 1, 0, 0xCC, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 17}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VALIGND_zzzi, "valignd", 1, 3, 1, 0, 0x03, 8, 2, 1, -1, 0, 5, 0, 0, 4, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 0}, {K_IMM, R_IMM, 4, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VALIGND_zzmi, "valignd", 1, 3, 1, 0, 0x03, 8, 2, 1, 9, 6, 0, 0, 1, 4, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 4}, {K_IMM, R_IMM, 8, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VBLENDMPD_zzz, "vblendmpd", 1, 2, 1, 1, 0x65, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
@@ -389,7 +390,7 @@ index 000000000..424a77cc1
 +  {X86::KNC_VCVTFXPNTUDQ2PS_zmi, "vcvtfxpntudq2ps", 1, 3, 0, 0, 0xCA, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VCVTPD2PS_zz, "vcvtpd2ps", 1, 1, 1, 1, 0x5A, 8, 2, 1, 3, 0, 1, 2, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VCVTPD2PS_zm, "vcvtpd2ps", 1, 1, 1, 1, 0x5A, 8, 2, 1, 7, 3, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VCVTPS2PD_zz, "vcvtps2pd", 1, 1, 0, 0, 0x5A, 8, 2, 1, 3, 0, 1, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 10}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VCVTPS2PD_zz, "vcvtps2pd", 1, 1, 0, 0, 0x5A, 8, 2, 1, 3, 0, 1, 0, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 10}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VCVTPS2PD_zm, "vcvtps2pd", 1, 1, 0, 0, 0x5A, 8, 2, 1, 7, 13, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VCVTUDQ2PD_zz, "vcvtudq2pd", 1, 1, 2, 0, 0x7A, 8, 2, 1, 3, 0, 1, 0, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 10}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VCVTUDQ2PD_zm, "vcvtudq2pd", 1, 1, 2, 0, 0x7A, 8, 2, 1, 7, 13, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
@@ -449,12 +450,12 @@ index 000000000..424a77cc1
 +  {X86::KNC_VFNMSUB231PD_zzm, "vfnmsub231pd", 1, 2, 1, 1, 0xBE, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VFNMSUB231PS_zzz, "vfnmsub231ps", 1, 2, 1, 0, 0xBE, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VFNMSUB231PS_zzm, "vfnmsub231ps", 1, 2, 1, 0, 0xBE, 8, 2, 1, 8, 4, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VGATHERDPD_zv, "vgatherdpd", 1, 2, 1, 1, 0x92, 8, 2, 1, 7, 10, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VGATHERDPS_zv, "vgatherdps", 1, 2, 1, 0, 0x92, 8, 2, 1, 7, 11, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VGATHERPF0DPS_v, "vgatherpf0dps", 1, 2, 1, 0, 0xC6, 1, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VGATHERPF0HINTDPD_v, "vgatherpf0hintdpd", 1, 2, 1, 1, 0xC6, 0, 2, 0, 6, 10, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VGATHERPF0HINTDPS_v, "vgatherpf0hintdps", 1, 2, 1, 0, 0xC6, 0, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VGATHERPF1DPS_v, "vgatherpf1dps", 1, 2, 1, 0, 0xC6, 2, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERDPD_zv, "vgatherdpd", 1, 2, 1, 1, 0x92, 8, 2, 1, 7, 10, 0, 0, 1, 2, {{K_VR, R_REG, 0, 17}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERDPS_zv, "vgatherdps", 1, 2, 1, 0, 0x92, 8, 2, 1, 7, 11, 0, 0, 1, 2, {{K_VR, R_REG, 0, 17}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERPF0DPS_v, "vgatherpf0dps", 1, 2, 1, 0, 0xC6, 1, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 23}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERPF0HINTDPD_v, "vgatherpf0hintdpd", 1, 2, 1, 1, 0xC6, 0, 2, 0, 6, 10, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 23}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERPF0HINTDPS_v, "vgatherpf0hintdps", 1, 2, 1, 0, 0xC6, 0, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 23}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VGATHERPF1DPS_v, "vgatherpf1dps", 1, 2, 1, 0, 0xC6, 2, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 23}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VGETEXPPD_zz, "vgetexppd", 1, 2, 1, 1, 0x42, 8, 2, 1, 3, 0, 1, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VGETEXPPD_zm, "vgetexppd", 1, 2, 1, 1, 0x42, 8, 2, 1, 7, 3, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VGETEXPPS_zz, "vgetexpps", 1, 2, 1, 0, 0x42, 8, 2, 1, 3, 0, 1, 12, 0, 2, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
@@ -547,8 +548,8 @@ index 000000000..424a77cc1
 +  {X86::KNC_VPERMD_zzm, "vpermd", 1, 2, 1, 0, 0x36, 8, 2, 1, 8, 6, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 4}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPERMF32X4_zzi, "vpermf32x4", 1, 3, 1, 0, 0x07, 8, 2, 1, -1, 0, 5, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 0}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPERMF32X4_zmi, "vpermf32x4", 1, 3, 1, 0, 0x07, 8, 2, 1, 8, 6, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VPGATHERDD_zv, "vpgatherdd", 1, 2, 1, 0, 0x90, 8, 2, 1, 7, 25, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VPGATHERDQ_zv, "vpgatherdq", 1, 2, 1, 1, 0x90, 8, 2, 1, 7, 10, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPGATHERDD_zv, "vpgatherdd", 1, 2, 1, 0, 0x90, 8, 2, 1, 7, 25, 0, 0, 1, 2, {{K_VR, R_REG, 0, 17}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPGATHERDQ_zv, "vpgatherdq", 1, 2, 1, 1, 0x90, 8, 2, 1, 7, 10, 0, 0, 1, 2, {{K_VR, R_REG, 0, 17}, {K_VSIB, R_RM, 2, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPMADD231D_zzz, "vpmadd231d", 1, 2, 1, 0, 0xB5, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPMADD231D_zzm, "vpmadd231d", 1, 2, 1, 0, 0xB5, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPMADD233D_zzz, "vpmadd233d", 1, 2, 1, 0, 0xB4, 8, 2, 1, 4, 0, 15, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
@@ -591,8 +592,8 @@ index 000000000..424a77cc1
 +  {X86::KNC_VPSBBD_zkm, "vpsbbd", 1, 2, 1, 0, 0x5E, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPSBBRD_zkz, "vpsbbrd", 1, 2, 1, 0, 0x6E, 8, 2, 1, 4, 0, 1, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPSBBRD_zkm, "vpsbbrd", 1, 2, 1, 0, 0x6E, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_KR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VPSCATTERDD_vz, "vpscatterdd", 1, 2, 1, 0, 0xA0, 8, 2, 5, 7, 25, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VPSCATTERDQ_vz, "vpscatterdq", 1, 2, 1, 1, 0xA0, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSCATTERDD_vz, "vpscatterdd", 1, 2, 1, 0, 0xA0, 8, 2, 5, 7, 25, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 21}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VPSCATTERDQ_vz, "vpscatterdq", 1, 2, 1, 1, 0xA0, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 21}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPSHUFD_zzi, "vpshufd", 1, 1, 1, 0, 0x70, 8, 2, 1, -1, 0, 5, 0, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_RM, 2, 0}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPSHUFD_zmi, "vpshufd", 1, 1, 1, 0, 0x70, 8, 2, 1, 8, 6, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {K_IMM, R_IMM, 7, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VPSLLD_zzi, "vpslld", 1, 1, 1, 0, 0x72, 6, 2, 1, 4, 0, 1, 0, 3, 3, {{K_VR, R_VVVV, 0, 1}, {K_VR, R_RM, 2, 2}, {K_IMM, R_IMM, 3, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
@@ -631,12 +632,12 @@ index 000000000..424a77cc1
 +  {X86::KNC_VRSQRT23PS_zm, "vrsqrt23ps", 1, 2, 1, 0, 0xCB, 8, 2, 1, 7, 6, 0, 0, 1, 2, {{K_VR, R_REG, 0, 1}, {K_MEM, R_RM, 2, 4}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VSCALEPS_zzz, "vscaleps", 1, 2, 1, 0, 0x84, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VSCALEPS_zzm, "vscaleps", 1, 2, 1, 0, 0x84, 8, 2, 1, 8, 14, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VSCATTERDPD_vz, "vscatterdpd", 1, 2, 1, 1, 0xA2, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VSCATTERDPS_vz, "vscatterdps", 1, 2, 1, 0, 0xA2, 8, 2, 5, 7, 11, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 5}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VSCATTERPF0DPS_v, "vscatterpf0dps", 1, 2, 1, 0, 0xC6, 5, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VSCATTERPF0HINTDPD_v, "vscatterpf0hintdpd", 1, 2, 1, 1, 0xC6, 4, 2, 0, 6, 10, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VSCATTERPF0HINTDPS_v, "vscatterpf0hintdps", 1, 2, 1, 0, 0xC6, 4, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
-+  {X86::KNC_VSCATTERPF1DPS_v, "vscatterpf1dps", 1, 2, 1, 0, 0xC6, 6, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 7}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERDPD_vz, "vscatterdpd", 1, 2, 1, 1, 0xA2, 8, 2, 5, 7, 10, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 21}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERDPS_vz, "vscatterdps", 1, 2, 1, 0, 0xA2, 8, 2, 5, 7, 11, 0, 0, 2, 2, {{K_VSIB, R_RM, 0, 21}, {K_VR, R_REG, 6, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERPF0DPS_v, "vscatterpf0dps", 1, 2, 1, 0, 0xC6, 5, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 23}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERPF0HINTDPD_v, "vscatterpf0hintdpd", 1, 2, 1, 1, 0xC6, 4, 2, 0, 6, 10, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 23}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERPF0HINTDPS_v, "vscatterpf0hintdps", 1, 2, 1, 0, 0xC6, 4, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 23}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
++  {X86::KNC_VSCATTERPF1DPS_v, "vscatterpf1dps", 1, 2, 1, 0, 0xC6, 6, 2, 0, 6, 11, 0, 0, 4, 1, {{K_VSIB, R_RM, 1, 23}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VSUBPD_zzz, "vsubpd", 1, 1, 1, 1, 0x5C, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VSUBPD_zzm, "vsubpd", 1, 1, 1, 1, 0x5C, 8, 2, 1, 8, 3, 0, 0, 1, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_MEM, R_RM, 3, 6}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
 +  {X86::KNC_VSUBPS_zzz, "vsubps", 1, 1, 0, 0, 0x5C, 8, 2, 1, 4, 0, 1, 2, 0, 3, {{K_VR, R_REG, 0, 1}, {K_VR, R_VVVV, 2, 0}, {K_VR, R_RM, 3, 2}, {0, 0, 0, 0}, {0, 0, 0, 0}}},

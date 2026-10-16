@@ -10,3 +10,12 @@ rounding vcvtfxpntudq2ps    # k1omni.s 2784-2792: the same
 # pseudo NAME BASE IMM|-: NAME assembles as BASE (with IMM appended, or as
 # BASE itself with "-").
 pseudo vpcmpnled vpcmpgtd - # k1omni.s 2137: gas emits 66.0F.W0 66 (vpcmpgtd); 327364 lists vpcmpd {nle}
+#
+# nosae MNEMONIC: the register form has no rounding or SAE; MVEX.E=1 on its
+# register source is written {eh}.
+nosae vcvtps2pd             # gas rejects {sae} ("unsupported for vcvtps2pd") and prints E=1 as %ymm3{eh}
+#
+# maskreq MNEMONIC: a write mask must be written (gas: "no default mask").
+# Every gather, scatter and gather/scatter prefetch needs one as well; the
+# generator gives that to all VSIB forms.
+maskreq vaddsetsps          # the mask also receives the signs of the sums
