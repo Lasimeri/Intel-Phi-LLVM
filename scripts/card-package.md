@@ -16,7 +16,12 @@ Contents of the tarball:
 | `lib/clang/<ver>/` | The compiler's own headers, the compiler-rt builtins and crt objects |
 
 Before packing, `phi-isa-audit` runs on `clang-<ver>` and `lld`, with
-`--ignore XSAVE` as in the stack.
+`--ignore XSAVE` as in the stack. The release build of the audit is used
+when it exists. The debug build panicked once on `lld` (2026-10-16):
+iced-x86 1.21.0 subtracts the two decode pointers as u32 (`decoder.rs:1421`),
+which overflows when an instruction straddles a 4 GiB boundary of the
+buffer's address. Three more debug runs on the same file, and the release
+build, reported 0 illegal.
 
 Output: `~/.cache/intel-phi-llvm-build/card-pkg/llvm-knc-card.tar.gz`
 and its `.sha256`. `scripts/card-check.sh` checks that sum on the card

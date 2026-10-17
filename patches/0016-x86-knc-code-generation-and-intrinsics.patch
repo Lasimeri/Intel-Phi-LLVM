@@ -1057,8 +1057,23 @@ index 9fc33a425..41dfdc35f 100644
                  [TuningSlow3OpsLEA,
                   TuningSlowDivide64,
                   TuningMacroFusion,
+diff --git a/llvm/lib/Target/X86/X86FastISel.cpp b/llvm/lib/Target/X86/X86FastISel.cpp
+index 95d5cbe06..3dc205cc6 100644
+--- a/llvm/lib/Target/X86/X86FastISel.cpp
++++ b/llvm/lib/Target/X86/X86FastISel.cpp
+@@ -297,6 +297,10 @@ bool X86FastISel::isTypeLegal(Type *Ty, MVT &VT, bool AllowI1) {
+     return false;
+ 
+   VT = evt.getSimpleVT();
++  // Knights Corner: its 512-bit types are selected by SelectionDAG only (the
++  // fast paths here emit AVX-512 moves for them).
++  if (Subtarget->hasKNC() && !Subtarget->hasAVX512() && VT.isVector())
++    return false;
+   // For now, require SSE/SSE2 for performing floating-point operations,
+   // since x87 requires additional work.
+   if (VT == MVT::f64 && !Subtarget->hasSSE2())
 diff --git a/llvm/lib/Target/X86/X86ISelLowering.cpp b/llvm/lib/Target/X86/X86ISelLowering.cpp
-index 070456bdf..e57ebfe20 100644
+index 070456bdf..dcc5d2681 100644
 --- a/llvm/lib/Target/X86/X86ISelLowering.cpp
 +++ b/llvm/lib/Target/X86/X86ISelLowering.cpp
 @@ -2771,6 +2771,36 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
@@ -1175,7 +1190,7 @@ index 070456bdf..e57ebfe20 100644
    // Do not merge to float value size (128 bytes) if no implicit
    // float attribute is set.
    bool NoFloat = MF.getFunction().hasFnAttribute(Attribute::NoImplicitFloat);
-@@ -9437,8 +9521,205 @@ LowerBUILD_VECTORAsVariablePermute(SDValue V, const SDLoc &DL,
+@@ -9437,8 +9521,208 @@ LowerBUILD_VECTORAsVariablePermute(SDValue V, const SDLoc &DL,
    return createVariablePermute(VT, SrcVec, IndicesVec, DL, DAG, Subtarget);
  }
  
@@ -1292,6 +1307,8 @@ index 070456bdf..e57ebfe20 100644
 +          BuildMI(DB, At, D->getDebugLoc(), TII.get(TargetOpcode::COPY), In)
 +              .addReg(G);
 +        }
++        // the source may have been killed by its old copy; it lives on now
++        MRI.clearKillFlags(In);
 +        MIB.addReg(In).addMBB(From);
 +      }
 +    }
@@ -1313,6 +1330,7 @@ index 070456bdf..e57ebfe20 100644
 +        continue;
 +      for (MachineInstr *C : Copies)
 +        C->getOperand(1).setReg(K);
++      MRI.clearKillFlags(K);
 +    }
 +  // A 16-bit constant that only goes into k registers: a 32-bit move (no
 +  // operand-size prefix) and kmov.
@@ -1381,7 +1399,7 @@ index 070456bdf..e57ebfe20 100644
    SDLoc dl(Op);
  
    MVT VT = Op.getSimpleValueType();
-@@ -26881,6 +27162,20 @@ static SDValue recoverFramePointer(SelectionDAG &DAG, const Function *Fn,
+@@ -26881,6 +27165,20 @@ static SDValue recoverFramePointer(SelectionDAG &DAG, const Function *Fn,
  
  SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
                                                     SelectionDAG &DAG) const {
@@ -1402,7 +1420,7 @@ index 070456bdf..e57ebfe20 100644
    // Helper to detect if the operand is CUR_DIRECTION rounding mode.
    auto isRoundModeCurDirection = [](SDValue Rnd) {
      if (auto *C = dyn_cast<ConstantSDNode>(Rnd))
-@@ -36515,6 +36810,10 @@ bool X86TargetLowering::shouldFoldSelectWithIdentityConstant(
+@@ -36515,6 +36813,10 @@ bool X86TargetLowering::shouldFoldSelectWithIdentityConstant(
  /// By default, if a target supports the VECTOR_SHUFFLE node, all mask values
  /// are assumed to be legal.
  bool X86TargetLowering::isShuffleMaskLegal(ArrayRef<int> Mask, EVT VT) const {
@@ -1413,7 +1431,7 @@ index 070456bdf..e57ebfe20 100644
    if (!VT.isSimple())
      return false;
  
-@@ -63103,9 +63402,42 @@ static SDValue combineINTRINSIC_VOID(SDNode *N, SelectionDAG &DAG,
+@@ -63103,9 +63405,42 @@ static SDValue combineINTRINSIC_VOID(SDNode *N, SelectionDAG &DAG,
    return SDValue();
  }
  

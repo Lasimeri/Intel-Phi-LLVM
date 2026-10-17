@@ -7,6 +7,8 @@ written with the Knights Corner intrinsics, on a card.
 scripts/s3-gate.sh NAME [CARD]        # NAME: vpu_memcpy, mandel_vpu, vpu_int, bitunpack
 scripts/s3-libknc-gate.sh [CARD]      # libknc
 LLVM_BIN=<bin dir> ...                # the clang to test (default: the series build)
+S3_OPT=-O0 ...                        # the candidate's optimization level (default -O2);
+                                      # at -O0 only the output check means anything
 ```
 
 `s3-gate.sh` assembles Intel-Phi-3120A's `card/examples/NAME.S` with the

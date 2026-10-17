@@ -1,9 +1,10 @@
 # patches
 
-Fifteen patches against `llvmorg-23.1.1` (commit `6dfe1677` in `SERIES`), the LLVM
+Seventeen patches against `llvmorg-23.1.1` (commit `6dfe1677` in `SERIES`), the LLVM
 Arch ships in `llvm-libs` (decision D1), applied by `scripts/build.sh` before it
 configures: 0001 to 0010 scalar, 0011 and 0012 the `knc` CPU (S1), 0013 to
-0015 the MVEX MC layer (S2). The first ten were
+0015 the MVEX MC layer (S2), 0016 and 0017 code generation and the
+intrinsics (S3). The first ten were
 imported from Intel-Phi-3120A `toolchain/llvm/patches` at cce74b6
 (against 22.1.8) and rebased 2026-10-15: every hunk applied unchanged, only
 line offsets and index lines moved. Named `NNNN-<summary>.patch`; each is a
@@ -46,3 +47,25 @@ instructions, round trips, text), `oracle/knc-mvex-check.sh` (830
 knc-mvex vectors), `scripts/mc-regress.sh` (1,086 other assemblies
 unchanged), `scripts/mvex-card-check.sh` (card 0) and
 `scripts/check-knc-gen.sh` (the generated files reproduce).
+
+## Code generation and the intrinsics (S3, 2026-10-16)
+
+| Patch | Files | Change |
+| --- | --- | --- |
+| 0016 | `IR/IntrinsicsX86.td`, `IR/IntrinsicsX86KNC.td` (generated), `X86InstrKNCIntrin.td` (generated), `X86KNCPseudos.inc`, `X86KNCPassThru.inc`, `X86KNCMemIntrinsics.inc` (generated), `X86InstrKNCCodeGen.td`, `X86InstrInfo.{td,cpp}`, `X86ISelLowering.{h,cpp}`, `X86ISelLoweringCall.cpp`, `X86FastISel.cpp`, `X86MCInstLower.cpp`, `X86RegisterInfo.cpp`, `X86TargetTransformInfo.cpp`, `X86ScheduleKNC.td`, `X86.td`, `TargetParser/X86TargetParser.{def,cpp}`, and two generic files: `CodeGen/TargetLowering.h`, `CodeGen/SelectionDAG/DAGCombiner.cpp` | v16f32, v16i32, v8f64, v8i64 legal in VR512 under `knc`, every generic operation on them expanded except loads, stores, bitcasts and constants; 297 `llvm.x86.knc.*` intrinsics selected through pseudos (tied operands stated) that become the S2 defs when the MCInst is built; k-register PHIs for masks carried around loops; memory operands for the memory forms; zmm and mask spills; FastISel declines the vector types (`-O0` goes through SelectionDAG); the in-order scheduling model `X86ScheduleKNC.td`; `sahf` in the CPU; `knc` as a target-parser feature; the guards that keep the legal 512-bit types out of scalar code |
+| 0017 | `Basic/BuiltinsX86.td`, `Basic/BuiltinsX86KNC.td` (generated), `Basic/Targets/X86.{h,cpp}`, `Sema/SemaX86.cpp`, `Sema/SemaX86KNC.inc` (generated), `Headers/kncintrin.h`, `Headers/immintrin.h`, `Headers/CMakeLists.txt` | `__builtin_ia32_knc_*` for every intrinsic, their immediates checked against the manual's tables; `knc` as a clang target feature; `<kncintrin.h>` (Intel's names), which `<immintrin.h>` includes alone under `__KNC__` |
+
+0016 is the first patch that touches generic CodeGen: a virtual,
+`TargetLoweringBase::getMaximumMergedStoreInBits(const MachineFunction &)`
+(default: the widest legal store, so other targets are unchanged), used by
+the four store-merge sites in `DAGCombiner.cpp`. The new virtual shifts the
+class's vtable. D1's patched dylib works because rustc never calls into
+`TargetLoweringBase`; `scripts/rust-check.sh` (host and card) is the check,
+and a rebase must run it again.
+
+Checked by `scripts/s3-gate.sh` and `scripts/s3-libknc-gate.sh` (card 0),
+`oracle/codegen-check.sh` (every KNC instruction the compiler emits,
+reassembled by gas), `tests/s3/maskspill.c` (card 0),
+`scripts/march-check.sh`, `scripts/scalar-check.sh` and
+`scripts/check-knc-gen.sh`. Results:
+`docs/results/2026-10-16-s3-intrinsics.md`.

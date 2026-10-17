@@ -10,6 +10,8 @@
 #
 #   scripts/s3-gate.sh NAME [CARD]
 #   LLVM_BIN   the clang to test (default: the series build's)
+#   S3_OPT     the optimization level of the candidate (default -O2; at -O0
+#              only the output check means anything)
 set -uo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/env.sh"
 NAME="${1:?usage: scripts/s3-gate.sh NAME [CARD]}"; CARD="${2:-0}"
@@ -20,7 +22,7 @@ AUDIT="$PHI_STACK_ROOT/host/target/debug/phi-isa-audit"
 w="$llvm_build/s3/gate-$NAME"; rm -rf "$w"; mkdir -p "$w"
 for f in "$T/$NAME.c" "$T/$NAME-gate.c" "$REF"; do [ -f "$f" ] || { echo "s3-gate.sh: $f missing" >&2; exit 1; }; done
 
-"$B/clang" "${CFG[@]}" -c -o "$w/$NAME.o" "$T/$NAME.c" || exit 1
+"$B/clang" "${CFG[@]}" ${S3_OPT:-} -c -o "$w/$NAME.o" "$T/$NAME.c" || exit 1
 LLVM_OBJDUMP="$B/llvm-objdump" "$llvm_root/oracle/codegen-check.sh" "$w/$NAME.o" || exit 1
 # the reference: assembled as the stack assembles it, symbols renamed
 "$S/clang" "${CFG[@]}" -c -o "$w/ref.o" "$REF" || exit 1

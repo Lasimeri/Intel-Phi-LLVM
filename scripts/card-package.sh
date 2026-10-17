@@ -8,7 +8,10 @@ set -euo pipefail
 PREFIX="${PHI_CARD_PREFIX:-/data/llvm-knc}"
 B="$llvm_build/build-card"; SYSROOT="$llvm_build/sysroot"
 RES=$("$llvm_build/llvm/bin/clang" -print-resource-dir); ver=$(basename "$RES")
-AUDIT="$PHI_STACK_ROOT/host/target/debug/phi-isa-audit"
+# the release audit when built: the debug one panics in iced-x86 1.21.0
+# (decoder.rs:1421, pointers subtracted as u32) when an instruction of a
+# large binary straddles a 4 GiB address boundary of its buffer
+AUDIT="$PHI_STACK_ROOT/host/target/release/phi-isa-audit"; [ -x "$AUDIT" ] || AUDIT="${AUDIT/release/debug}"
 out="$llvm_build/card-pkg"; rm -rf "$out"; pkg="$out/root$PREFIX"
 mkdir -p "$pkg/bin" "$pkg/lib/clang/$ver/lib/linux"
 cp "$B/bin/clang-$ver" "$pkg/bin/"; for n in clang clang++ cc c++; do ln -sfn "clang-$ver" "$pkg/bin/$n"; done

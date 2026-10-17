@@ -1,7 +1,7 @@
 # Intel-Phi-LLVM
 
 LLVM and Clang for the Xeon Phi 3120A (Knights Corner), the whole core.
-The scalar knc64-x87 subset works on LLVM 23.1.1, the version Arch ships (S0), and `-march=knc` selects it with hardening defaults in `config/knc.cfg` (S1). Under `knc`, LLVM assembles, encodes, prints and disassembles the MVEX vector ISA byte for byte as Intel's K1OM assembler does (S2). With the Knights Corner intrinsics (`<immintrin.h>` under `-march=knc`), clang compiles C into MVEX code: the stack's hand-encoded vector kernels and libknc, rewritten with them, give identical output on a card at equal or better speed, except two small-size cases (S3). This repository adds the
+The scalar knc64-x87 subset works on LLVM 23.1.1, the version Arch ships (S0), and `-march=knc` selects it with hardening defaults in `config/knc.cfg` (S1). Under `knc`, LLVM assembles, encodes, prints and disassembles the MVEX vector ISA byte for byte as Intel's K1OM assembler does (S2). With the Knights Corner intrinsics (`<immintrin.h>` under `-march=knc`), clang compiles C into MVEX code: the stack's hand-encoded vector kernels and libknc, rewritten with them, give identical output on a card at equal or better speed, except the short clears of `vpu_memcpy`, 1 to 6% slower (S3). This repository adds the
 512-bit MVEX vector unit, as a `knc` feature and CPU (`-mcpu=knc`,
 `-march=knc`) beside the scalar restrictions.
 

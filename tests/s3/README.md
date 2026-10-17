@@ -17,6 +17,7 @@ libknc). A kernel is "within" when its median is inside the range of the
 | `vpu_int` | [vpu_int.c](vpu_int.c): `vpu_int_probe`, `vpu_int_unaligned` | [vpu_int-gate.c](vpu_int-gate.c) | `scripts/s3-gate.sh vpu_int` |
 | `bitunpack` | [bitunpack.c](bitunpack.c): `knc_unpack_b5`, `b11`, `b16` | [bitunpack-gate.c](bitunpack-gate.c) | `scripts/s3-gate.sh bitunpack` |
 | libknc | `knc.c`, written by [knc-c-gen.c](knc-c-gen.c): all 176 exported functions and tables | [knc-gate.c](knc-gate.c) | `scripts/s3-libknc-gate.sh` |
+| mask spills | [maskspill.c](maskspill.c): a mask carried around a loop that calls a function, twelve masks live across a call; self-checking against scalar C | the same file | by hand, see [maskspill.md](maskspill.md) |
 
 Rules the C follows, each because the hand version does the same:
 
@@ -28,19 +29,19 @@ Rules the C follows, each because the hand version does the same:
 - a source that the instruction overwrites is `_mm512_undefined_epi32()`.
 
 Measured on card 0, 2026-10-16, with the series build (patches 0001 to
-0017), the logs in `~/.cache/intel-phi-llvm-build/s3/final/`:
+0017), the logs in `~/.cache/intel-phi-llvm-build/s3/final2/`:
 
 | Kernel | Output | Speed (`.byte` median / intrinsics median) |
 | --- | --- | --- |
-| `vpu_memcpy` | 201 of 201 cases identical | `memcpy64`: 1.016 to 1.033 at 64 B to 1 MiB; `memset64_ord`: 0.960 to 1.006, within; `memset64`: within except **64 B 0.993 and 64 KiB 0.984 (below)** |
-| `mandel_vpu` | 30,720 calls identical (256 x 192 points at maxiter 1, 2, 17, 256, 1000) | 1.123 (maxiter 64), 1.150 (maxiter 1000) |
-| `vpu_int` | 4,128 cases identical | probe 1.547; unaligned 0.937, inside the `.byte` range (27.7 to 29.7 ns, median 27.7 against 29.6) |
-| `bitunpack` | 6,000 unpacks identical | b5 1.220, b11 1.192, b16 1.068 |
-| libknc | 10,484 cases identical (every width of every family, misaligned FastLanes input, out-of-range widths) | 163 of 163 kernels faster than every run of the `.byte` version (ratio 1.015 to 2.642, mean 1.247) |
+| `vpu_memcpy` | 201 of 201 cases identical | `memcpy64`: 1.021 to 1.042 at 64 B to 1 MiB; `memset64_ord`: 0.944 to 1.005, **256 B 0.965 (below)**; `memset64`: within except **64 B 0.989 (below)** |
+| `mandel_vpu` | 30,720 calls identical (256 x 192 points at maxiter 1, 2, 17, 256, 1000) | 1.124 (maxiter 64), 1.150 (maxiter 1000) |
+| `vpu_int` | 4,128 cases identical | probe 1.551; unaligned 0.942, inside the `.byte` range (27.8 to 29.7 ns, median 27.9 against 29.6) |
+| `bitunpack` | 6,000 unpacks identical | b5 1.218, b11 1.193, b16 1.066 |
+| libknc | 10,484 cases identical (every width of every family, misaligned FastLanes input, out-of-range widths) | 163 of 163 kernels faster than every run of the `.byte` version (ratio 1.014 to 2.577, mean 1.246) |
 
-The clears of one and four blocks are 1 to 4% slower by median in every
+The clears of one and four blocks are 1 to 6% slower by median in every
 run, and which of them falls outside the `.byte` range moves from run to
-run (`memset64_ord` 256 B and `memset64` 64 B in the run before). The
+run (three runs: docs/results/2026-10-16-s3-intrinsics.md). The
 cause is one extra instruction on the path of a call of
 one or four blocks: a register copy (`movq %rax, %rcx`, the greedy
 allocator puts the cursor next to the return value) and a `jmp` from the

@@ -9,6 +9,8 @@
 #
 #   scripts/s3-libknc-gate.sh [CARD]
 #   LLVM_BIN   the clang to test (default: the series build's)
+#   S3_OPT     the optimization level of the candidate (default -O2; at -O0
+#              only the output check means anything)
 set -uo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/env.sh"
 CARD="${1:-0}"
@@ -27,8 +29,8 @@ done
 
 # the candidate
 cc -O2 -o "$w/knc-c-gen" "$T/knc-c-gen.c" && "$w/knc-c-gen" > "$w/knc.c" || exit 1
-"$B/clang" "${CFG[@]}" -c -o "$w/knc.o" "$w/knc.c" || exit 1
-"$B/clang" "${CFG[@]}" -c -o "$w/vpu_memcpy.o" "$T/vpu_memcpy.c" || exit 1
+"$B/clang" "${CFG[@]}" ${S3_OPT:-} -c -o "$w/knc.o" "$w/knc.c" || exit 1
+"$B/clang" "${CFG[@]}" ${S3_OPT:-} -c -o "$w/vpu_memcpy.o" "$T/vpu_memcpy.c" || exit 1
 LLVM_OBJDUMP="$B/llvm-objdump" "$llvm_root/oracle/codegen-check.sh" "$w/knc.o" "$w/vpu_memcpy.o" || exit 1
 # the same exported functions and tables as the library
 "$S/llvm-nm" --defined-only -g "$w/ref.a" | awk 'NF == 3 { sub(/^ref_/, "", $3); print $3 }' | sort > "$w/ref.syms"
