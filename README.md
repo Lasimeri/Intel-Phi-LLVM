@@ -1,7 +1,7 @@
 # Intel-Phi-LLVM
 
 LLVM and Clang for the Xeon Phi 3120A (Knights Corner), the whole core.
-The scalar knc64-x87 subset works on LLVM 23.1.1, the version Arch ships (S0), and `-march=knc` selects it with hardening defaults in `config/knc.cfg` (S1). Under `knc`, LLVM assembles, encodes, prints and disassembles the MVEX vector ISA byte for byte as Intel's K1OM assembler does (S2). This repository adds the
+The scalar knc64-x87 subset works on LLVM 23.1.1, the version Arch ships (S0), and `-march=knc` selects it with hardening defaults in `config/knc.cfg` (S1). Under `knc`, LLVM assembles, encodes, prints and disassembles the MVEX vector ISA byte for byte as Intel's K1OM assembler does (S2). With the Knights Corner intrinsics (`<immintrin.h>` under `-march=knc`), clang compiles C into MVEX code: the stack's hand-encoded vector kernels and libknc, rewritten with them, give identical output on a card at equal or better speed, except two small-size cases (S3). This repository adds the
 512-bit MVEX vector unit, as a `knc` feature and CPU (`-mcpu=knc`,
 `-march=knc`) beside the scalar restrictions.
 
@@ -25,6 +25,8 @@ the card stack:
 | `scripts/march-check.sh`, `hardening-check.sh` | The S1 gate: `-march=knc` byte-identical to `knc-cc`, hardening defaults on a card |
 | `isa/`, `tools/knc-gen.c` | The KNC instruction table extracted from Intel's manual 327364 (`scripts/isa-extract.sh`) and its generator for patch 0013 (`scripts/check-knc-gen.sh`) |
 | `oracle/k1omni-check.sh`, `knc-sweep.sh`, `knc-mvex-check.sh`, `scripts/mc-regress.sh`, `asm-regress.sh`, `mvex-card-check.sh`, `tests/` | The S2 gate: Intel's K1OM test byte for byte with round trips, every def swept through gas, the knc-mvex vectors, other x86 encodings and the runtime assembly unchanged, a self-checking MVEX probe on a card |
+| `scripts/s3-gate.sh`, `s3-libknc-gate.sh`, `tests/s3/`, `oracle/codegen-check.sh` | The S3 gate: the stack's vector kernels and libknc written with the intrinsics, against the `.byte` originals on a card (output and interleaved speed), and every KNC instruction the compiler emits against gas |
+| `scripts/scalar-check.sh`, `knc-intrinsics.sh` | What S3 did to scalar code on a card; how much of Intel's KNC intrinsic API the header covers |
 | `oracle/` | Intel's MPSS binutils 2.22, built from checksummed sources and run as the MVEX encoding oracle (GPL, never copied) |
 | `docs/plan.md` | Stages S0 to S6 and their gates |
 | `docs/research/` | Prior art, measurements, constraints |

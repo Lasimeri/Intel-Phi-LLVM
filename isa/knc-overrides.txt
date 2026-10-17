@@ -19,3 +19,27 @@ nosae vcvtps2pd             # gas rejects {sae} ("unsupported for vcvtps2pd") an
 # Every gather, scatter and gather/scatter prefetch needs one as well; the
 # generator gives that to all VSIB forms.
 maskreq vaddsetsps          # the mask also receives the signs of the sums
+#
+# The data flow of code generation (S3) comes from isa/knc-ops.txt, read
+# out of each Operation section by isa/extract-ops.awk. These lines correct
+# it where the text does not say what the instruction reads or writes in a
+# form that awk sees. Evidence: the page's Operation section in 327364-001.
+#
+# untied MNEMONIC: the destination read is another form's, not this one's.
+untied vmovaps              # "tmp = DownConvStoref32(zmm1...)" is the store form's source
+untied vmovapd              # the same
+untied vmovdqa32            # the same
+untied vmovdqa64            # the same
+#
+# tied MNEMONIC: the destination keeps what the instruction does not write.
+tied vloadunpackhd          # writes only the elements past the next 64-byte boundary (foundNext64BytesBoundary)
+tied vloadunpackhps         # the same
+tied vloadunpackhpd         # the same
+tied vloadunpackhq          # the same
+#
+# blend MNEMONIC: the mask selects between two sources and every element is
+# written, so a masked form has no pass-through.
+blend vblendmps             # "if(k1[n]==1 or *no write-mask*) zmm1 = tmpSrc3 else zmm1 = zmm2"
+blend vblendmpd             # the same
+blend vpblendmd             # the same
+blend vpblendmq             # the same

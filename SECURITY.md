@@ -12,15 +12,20 @@ beyond its directory, and compiled programs weaker than they need to be.
 | MPSS sources (oracle) | SHA-256 of the outer tar and of the inner binutils tarball, in `oracle/SHA256SUMS` | `oracle/build-binutils.sh`, before extraction |
 | Patches | git history of this repository | `git apply` onto the pristine verified tree; a patch that does not apply exactly stops the build |
 | Intel ISA reference 327364-001 (the instruction table) | SHA-256 in `scripts/isa-extract.sh` | before `pdftotext` reads it; the extraction is committed (`isa/knc-isa.txt`) and the generated table files are checked against it by `make check` |
+| Intel Intrinsics Guide data 3.5.3 (the KNC intrinsic names) | SHA-256 in `scripts/knc-intrinsics.sh` | before it is read; only names and instruction counts are taken, for the coverage report. Nothing from it is in a patch |
 
-Two steps use the network:
+Three steps use the network:
 
 - `scripts/build.sh fetch`, verified against the pinned commit;
+- `scripts/knc-intrinsics.sh`, which fetches the Intrinsics Guide data
+  once from the Internet Archive and checks its SHA-256;
 - `scripts/rust-check.sh`, whose `cargo -Zbuild-std` downloads std's
   dependency crates from crates.io. They are pinned by the checksums in
   rust-src's own `Cargo.lock` (Arch package `rust-src`).
 
-Configure, build, install, the runtimes, the card checks and the oracle
+`scripts/s3-libknc-gate.sh` builds the stack's `knc-mvex` with cargo
+`--locked`; it has no dependencies, so nothing is fetched. Configure,
+build, install, the runtimes, the card checks and the oracle
 all run offline.
 
 ## Isolation

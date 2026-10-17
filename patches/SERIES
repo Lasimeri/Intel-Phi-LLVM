@@ -15,3 +15,5 @@
 0013-x86-knc-mvex-instruction-table-and-encoder.patch
 0014-x86-knc-assembler-and-instruction-printers.patch
 0015-x86-knc-disassembler.patch
+0016-x86-knc-code-generation-and-intrinsics.patch
+0017-clang-knc-builtins-and-kncintrin-header.patch

@@ -8,12 +8,14 @@ set -euo pipefail
 CLANG="$llvm_build/llvm/bin/clang"; LLC="$llvm_build/llvm/bin/llc"
 M="${PHI_MUSL_SRC:-$HOME/.cache/intel-phi-3120a-build/toolchain/musl-1.2.5}"
 w="$llvm_build/march-check"; rm -rf "$w"; mkdir -p "$w/ref" "$w/new"
-# knc-cc's flag set, minus the paths (Intel-Phi-3120A toolchain/clang/knc-cc).
+# knc-cc's flag set, minus the paths (Intel-Phi-3120A toolchain/clang/knc-cc),
+# plus what S3 added to the knc CPU: sahf (327364 appendix B) and its own
+# scheduling model (-mtune=knc).
 REF=(--target=x86_64-unknown-linux-musl -march=x86-64
   -mno-mmx -mno-sse -mno-sse2 -mno-sse3 -mno-ssse3 -mno-sse4.1 -mno-sse4.2 -mno-sse4a
   -mno-avx -mno-avx2 -mno-fma -mno-f16c -mno-movbe -mno-popcnt -mno-lzcnt -mno-bmi -mno-bmi2
   -mno-xsave -mno-cx16 -mno-prfchw -mno-clflushopt -mno-rdrnd -mno-rdseed -mno-adx -mno-fsgsbase
-  -mno-pclmul -mno-aes -mno-sha -mno-cmov -mno-nopl -fcf-protection=none -fno-jump-tables)
+  -mno-pclmul -mno-aes -mno-sha -mno-cmov -mno-nopl -msahf -mtune=knc -fcf-protection=none -fno-jump-tables)
 NEW=(--target=x86_64-unknown-linux-musl -march=knc -fcf-protection=none -fno-jump-tables)
 MUSL=(-std=c99 -nostdinc -ffreestanding -fexcess-precision=standard -frounding-math
   -fno-strict-aliasing -D_XOPEN_SOURCE=700 -O2 -fomit-frame-pointer -fno-unwind-tables
@@ -46,7 +48,8 @@ for f in "$PHI_STACK_ROOT"/card/examples/*.c "$PHI_STACK_ROOT/toolchain/check/he
 o=$(echo "$2" | md5sum | cut -c1-12)
 case "$2" in "$M"/*) extra=("${MUSL[@]}") ;; *) extra=(-O2 --sysroot="$SYS") ;; esac
 if [ "$1" = ref ]; then flags=("${REF[@]}"); else flags=("${NEW[@]}"); fi
-"$CLANG" "${flags[@]}" "${extra[@]}" -c "$2" -o "$w/$1/$o.o" 2>/dev/null || echo "$2" >> "$w/$1.fail"
+# a compile that takes 5 minutes is a hang, and fails
+timeout 300 "$CLANG" "${flags[@]}" "${extra[@]}" -c "$2" -o "$w/$1/$o.o" 2>/dev/null || echo "$2" >> "$w/$1.fail"
 JOB
 } > "$w/job.sh"; chmod +x "$w/job.sh"
 while read -r f; do printf "%s\0%s\0" ref "$f"; printf "%s\0%s\0" new "$f"; done < "$list" | xargs -0 -n2 -P "${PHI_JOBS:-$(nproc)}" "$w/job.sh"

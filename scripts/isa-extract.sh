@@ -11,10 +11,18 @@ echo "$SUM  $PDF" | sha256sum -c --quiet - || { echo "isa-extract.sh: $PDF does 
 W="$llvm_build/isa"; mkdir -p "$W"
 pdftotext -layout "$PDF" "$W/isa.txt"
 awk -f "$llvm_root/isa/extract-isa.awk" "$W/isa.txt" > "$W/knc-isa.txt"
+awk -f "$llvm_root/isa/extract-ops.awk" "$W/isa.txt" > "$W/knc-ops.txt"
 if cmp -s "$W/knc-isa.txt" "$llvm_root/isa/knc-isa.txt"; then
     echo "isa-extract.sh: isa/knc-isa.txt reproduced ($(grep -c . "$W/knc-isa.txt") records, pdftotext $(pdftotext -v 2>&1 | awk 'NR==1 {print $3}'))"
 else
     echo "isa-extract.sh: the extraction differs from isa/knc-isa.txt:" >&2
     diff "$llvm_root/isa/knc-isa.txt" "$W/knc-isa.txt" | head -20 >&2
+    exit 1
+fi
+if cmp -s "$W/knc-ops.txt" "$llvm_root/isa/knc-ops.txt"; then
+    echo "isa-extract.sh: isa/knc-ops.txt reproduced ($(grep -c . "$W/knc-ops.txt") records)"
+else
+    echo "isa-extract.sh: the data-flow extraction differs from isa/knc-ops.txt:" >&2
+    diff "$llvm_root/isa/knc-ops.txt" "$W/knc-ops.txt" | head -20 >&2
     exit 1
 fi
